@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/Conversia-AI/todoai/errx"
+	"github.com/Conversia-AI/craftale/errx"
 	"github.com/golang-jwt/jwt/v5"
 )
 

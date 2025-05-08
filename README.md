@@ -35,7 +35,21 @@ An interface-based authentication system that adapts to any project:
 - **Provider Flexibility**: Extensible for any OAuth provider
 - **Secure by Default**: Implements authentication best practices
 
-## 🚀 Installation
+### storex - Database Store Abstraction
+
+A generic abstraction layer for working with different database stores:
+
+- **Type-safe Generic Implementations**: Strongly-typed database operations
+- **Complete CRUD Operations**: Unified API for standard operations
+- **Advanced Pagination**: Consistent pagination with sorting and filtering
+- **Bulk Operations**: Efficient batch processing for large datasets
+- **Transaction Support**: Safe database operations with rollback capability
+- **Query Builder**: Type-safe fluent interface for complex queries
+- **Full-text Search**: Powerful search capabilities for MongoDB and SQL
+- **Change Notifications**: Real-time data change streams (MongoDB)
+- **Consistent Error Handling**: Detailed context for database errors
+
+## 📥 Installation
 
 ```bash
 go get github.com/Abraxas-365/craftable
@@ -46,9 +60,10 @@ Or install specific packages:
 ```bash
 go get github.com/Abraxas-365/craftable/errx
 go get github.com/Abraxas-365/craftable/auth
+go get github.com/Abraxas-365/craftable/storex
 ```
 
-## 🔍 Example Usage
+## 🚀 Example Usage
 
 ### Error Handling (errx)
 
@@ -114,7 +129,221 @@ func main() {
 }
 ```
 
-## 📐 Design Principles
+### Database Store (storex)
+
+#### Basic CRUD Operations
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "time"
+    
+    "github.com/Abraxas-365/craftable/storex"
+    "go.mongodb.org/mongo-driver/mongo"
+)
+
+// Define your model
+type User struct {
+    ID        string `bson:"_id,omitempty"`
+    Name      string `bson:"name"`
+    Email     string `bson:"email"`
+    CreatedAt int64  `bson:"created_at"`
+}
+
+func ExampleCRUD(client *mongo.Client) {
+    // Get collection
+    collection := client.Database("myapp").Collection("users")
+
+    // Create a typed store for Users
+    userStore := storex.NewTypedMongo[User](collection)
+    ctx := context.Background()
+    
+    // Create a new user
+    newUser := User{
+        Name:      "John Doe",
+        Email:     "john@example.com",
+        CreatedAt: time.Now().Unix(),
+    }
+    
+    createdUser, err := userStore.Create(ctx, newUser)
+    if err != nil {
+        // Handle error
+        return
+    }
+    
+    // Find by ID
+    user, err := userStore.FindByID(ctx, createdUser.ID)
+    if err != nil {
+        // Handle error
+        return
+    }
+    
+    // Update user
+    user.Name = "John Smith"
+    updatedUser, err := userStore.Update(ctx, user.ID, user)
+    if err != nil {
+        // Handle error
+        return
+    }
+    
+    // Delete user
+    err = userStore.Delete(ctx, user.ID)
+    if err != nil {
+        // Handle error
+        return
+    }
+}
+```
+
+#### Pagination and Filtering
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    
+    "github.com/Abraxas-365/craftable/storex"
+    "go.mongodb.org/mongo-driver/mongo"
+)
+
+func ExamplePagination(client *mongo.Client) {
+    collection := client.Database("myapp").Collection("users")
+    userStore := storex.NewTypedMongo[User](collection)
+
+    // Create pagination options
+    opts := storex.DefaultPaginationOptions()
+    opts.Page = 1
+    opts.PageSize = 10
+    opts.OrderBy = "created_at"
+    opts.Desc = true
+    
+    // Add filters
+    opts = opts.WithFilter("name", "John")
+    opts = opts.WithFilter("active", true)
+
+    // Perform paginated query
+    ctx := context.Background()
+    result, err := userStore.Paginate(ctx, opts)
+    if err != nil {
+        // Handle error
+        return
+    }
+
+    // Access results
+    for _, user := range result.Data {
+        fmt.Println(user.Name, user.Email)
+    }
+
+    // Pagination metadata
+    fmt.Printf("Page %d of %d (Total: %d items)\n", 
+        result.Page.Number, result.Page.Pages, result.Page.Total)
+    
+    // Check for more pages
+    if result.HasNext() {
+        fmt.Println("More pages available")
+    }
+}
+```
+
+#### Advanced Features: Bulk Operations, Transactions, Search
+
+```go
+package main
+
+import (
+    "context"
+    "database/sql"
+    "fmt"
+    
+    "github.com/Abraxas-365/craftable/storex"
+    _ "github.com/lib/pq" // PostgreSQL driver
+)
+
+// Define product model
+type Product struct {
+    ID          int     `json:"id"`
+    Name        string  `json:"name"`
+    Description string  `json:"description"`
+    Price       float64 `json:"price"`
+    CreatedAt   string  `json:"created_at"`
+}
+
+func ExampleAdvancedFeatures(db *sql.DB) {
+    // Create a typed store for Products
+    productStore := storex.NewTypedSQL[Product](db).
+        WithTableName("products").
+        WithIDColumn("id")
+
+    ctx := context.Background()
+
+    // 1. Bulk operations
+    products := []Product{
+        {Name: "Product 1", Price: 19.99},
+        {Name: "Product 2", Price: 29.99},
+        {Name: "Product 3", Price: 39.99},
+    }
+    
+    // Insert multiple products at once
+    err := productStore.BulkInsert(ctx, products)
+    if err != nil {
+        // Handle error
+        return
+    }
+    
+    // 2. Transaction support
+    err = productStore.WithTransaction(ctx, func(txCtx context.Context) error {
+        // All operations in this function are part of the same transaction
+        product := Product{Name: "Transaction Product", Price: 99.99}
+        
+        created, err := productStore.Create(txCtx, product)
+        if err != nil {
+            return err // Will cause rollback
+        }
+        
+        idStr := fmt.Sprintf("%d", created.ID)
+        return productStore.Delete(txCtx, idStr) // Success = commit, error = rollback
+    })
+    
+    // 3. Full-text search
+    searchOpts := storex.SearchOptions{
+        Fields: []string{"name", "description"},
+        Limit:  10,
+    }
+    
+    results, err := productStore.Search(ctx, "smartphone", searchOpts)
+    if err != nil {
+        // Handle error
+        return
+    }
+    
+    fmt.Printf("Found %d matching products\n", len(results))
+    
+    // 4. Query building
+    query := storex.NewQueryBuilder[Product]().
+        Where("price", ">", 50.0).
+        Where("name", "LIKE", "%phone%").
+        OrderBy("price", false).  // ascending order
+        Limit(20)
+        
+    // Convert to pagination options
+    queryOpts := query.ToPaginationOptions()
+    queryResults, err := productStore.Paginate(ctx, queryOpts)
+    
+    if err != nil {
+        // Handle error
+        return
+    }
+    
+    fmt.Printf("Found %d matching products\n", queryResults.Page.Total)
+}
+```
+
+## 🔍 Design Principles
 
 Craftable follows these core principles:
 
@@ -130,6 +359,7 @@ For detailed documentation and examples for each package, see:
 
 - [errx Documentation](https://pkg.go.dev/github.com/Abraxas-365/craftable/errx)
 - [auth Documentation](https://pkg.go.dev/github.com/Abraxas-365/craftable/auth)
+- [storex Documentation](https://pkg.go.dev/github.com/Abraxas-365/craftable/storex)
 
 ## 📝 License
 

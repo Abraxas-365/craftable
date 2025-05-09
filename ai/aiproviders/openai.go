@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/Abraxas-365/craftale/ai/embedding"
 	"github.com/Abraxas-365/craftale/ai/llm"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
@@ -477,4 +478,79 @@ func convertFromOpenAIResponse(completion *openai.ChatCompletion) (llm.Response,
 		Message: message,
 		Usage:   usage,
 	}, nil
+}
+
+func (p *OpenAIProvider) EmbedDocuments(ctx context.Context, documents []string, opts ...embedding.Option) ([]embedding.Embedding, error) {
+	options := embedding.DefaultOptions()
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	// Prepare parameters
+	params := openai.EmbeddingNewParams{
+		Input: openai.EmbeddingNewParamsInputUnion{
+			OfArrayOfStrings: documents,
+		},
+	}
+
+	// Set the model
+	if options.Model != "" {
+		params.Model = options.Model
+	} else {
+		// Default model
+		params.Model = "text-embedding-ada-002"
+	}
+
+	// Set dimensions if specified
+	if options.Dimensions > 0 {
+		params.Dimensions = openai.Int(int64(options.Dimensions))
+	}
+
+	// Set user if specified
+	if options.User != "" {
+		params.User = openai.String(options.User)
+	}
+
+	// Call the OpenAI embedding API
+	resp, err := p.client.Embeddings.New(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert the response to our embedding type
+	embeddings := make([]embedding.Embedding, len(resp.Data))
+	for i, data := range resp.Data {
+		embeddings[i] = embedding.Embedding{
+			Vector: convertToFloat32Slice(data.Embedding),
+			Usage: embedding.Usage{
+				PromptTokens: int(resp.Usage.PromptTokens),
+				TotalTokens:  int(resp.Usage.TotalTokens),
+			},
+		}
+	}
+
+	return embeddings, nil
+}
+
+// EmbedQuery implements the embedding.Embedder interface
+func (p *OpenAIProvider) EmbedQuery(ctx context.Context, text string, opts ...embedding.Option) (embedding.Embedding, error) {
+	embeddings, err := p.EmbedDocuments(ctx, []string{text}, opts...)
+	if err != nil {
+		return embedding.Embedding{}, err
+	}
+
+	if len(embeddings) == 0 {
+		return embedding.Embedding{}, errors.New("no embedding returned")
+	}
+
+	return embeddings[0], nil
+}
+
+// Helper function to convert []float64 to []float32
+func convertToFloat32Slice(input []float64) []float32 {
+	result := make([]float32, len(input))
+	for i, v := range input {
+		result[i] = float32(v)
+	}
+	return result
 }

@@ -40,6 +40,7 @@
     - [LLM Interaction](#llm-interaction)
     - [Text Embedding](#text-embedding)
     - [OCR Processing](#ocr-processing)
+    - [Configuration Management(configx)](#configx-configuration-management)
   - [🎨 Design Principles](#-design-principles)
   - [📚 Documentation](#-documentation)
   - [📜 License](#-license)
@@ -137,6 +138,20 @@ Extract text from images with confidence scores and structured results:
 - **Text Blocks**: Structured information about detected text regions
 - **Multiple Languages**: Support for various languages and scripts
 - **Format Flexibility**: Works with different image formats
+
+### configx - Advanced Configuration Management
+
+A flexible configuration management system that supports multiple sources:
+
+- **Multiple Sources**: Load configuration from environment variables, .env files, and more
+- **Type Conversion**: Automatic conversion of string values to appropriate types
+- **Nested Configuration**: Support for hierarchical configuration structures
+- **Priority-Based Merging**: Higher priority sources override lower priority ones
+- **Unified Access API**: Consistent access to configuration values regardless of source
+- **Environment Variable Support**: Load configuration from environment variables with prefix filtering
+- **Validation**: Verify required configuration values are present
+- **Change Notification**: React to configuration changes
+- **Auto-reload**: Automatically reload configuration at intervals
 
 ## 🚀 Installation
 
@@ -737,6 +752,155 @@ func main() {
         fmt.Printf("Block %d: '%s' (Confidence: %.2f)\n", 
             i+1, block.Text, block.Confidence)
     }
+}
+```
+### configx - Configuration Management
+
+```go
+package main
+
+import (
+	"fmt"
+	"log"
+	"os"
+
+	"github.com/Abraxas-365/craftable/configx"
+)
+
+func main() {
+	// Set environment variables programmatically
+	os.Setenv("APP_SERVER_PORT", "9000")
+	os.Setenv("APP_SERVER_HOST", "api.example.com")
+	os.Setenv("APP_DATABASE_URL", "postgres://user:pass@db.example.com:5432/mydb")
+	os.Setenv("APP_API_KEY", "my-secret-api-key")
+	os.Setenv("APP_DEBUG", "true")
+	os.Setenv("APP_MAX_CONNECTIONS", "100")
+
+	// Create configuration from environment variables and defaults
+	config, err := configx.NewBuilder().
+		WithDefaults(map[string]interface{}{
+			"server": map[string]interface{}{
+				"port": 8080,
+				"host": "localhost",
+			},
+			"debug": false,
+		}).
+		FromEnv("APP_").
+		RequireEnv("APP_DATABASE_URL", "APP_API_KEY").
+		Build()
+
+	if err != nil {
+		log.Fatalf("Configuration error: %s", err)
+	}
+
+	// Access configuration values with type conversion
+	serverPort := config.Get("server.port").AsInt()
+	serverHost := config.Get("server.host").AsString()
+	dbURL := config.Get("database.url").AsString()
+	apiKey := config.Get("api.key").AsString()
+	debug := config.Get("debug").AsBool()
+
+	fmt.Printf("Server:       %s:%d\n", serverHost, serverPort)
+	fmt.Printf("Database URL: %s\n", dbURL)
+	fmt.Printf("API Key:      %s\n", apiKey)
+	fmt.Printf("Debug Mode:   %t\n", debug)
+}
+```
+
+#### Loading from Multiple Sources
+```go
+package main
+
+import (
+	"fmt"
+	"log"
+
+	"github.com/Abraxas-365/craftable/configx"
+)
+
+func main() {
+	// Create configuration with multiple sources
+	config, err := configx.NewBuilder().
+		WithDefaults(map[string]interface{}{
+			"server": map[string]interface{}{
+				"port": 8080,
+			},
+			"timeout": 30,
+		}).
+		FromDotEnv(".env").          // Load from .env file
+		FromEnv("APP_").             // Load from environment variables
+		FromFile("config.yaml", 30). // Load from YAML file
+		Build()
+
+	if err != nil {
+		log.Fatalf("Configuration error: %s", err)
+	}
+
+	// Access configuration with default values
+	port := config.Get("server.port").AsIntDefault(9000)
+	timeout := config.Get("timeout").AsIntDefault(60)
+	
+	fmt.Printf("Server Port: %d\n", port)
+	fmt.Printf("Timeout: %d seconds\n", timeout)
+	
+	// Check if a configuration value exists
+	if config.Has("database.url") {
+		fmt.Printf("Database URL: %s\n", config.Get("database.url").AsString())
+	} else {
+		fmt.Println("No database URL configured")
+	}
+}
+```
+
+### Type Conversion and Nested Configuration
+```go
+package main
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/Abraxas-365/craftable/configx"
+)
+
+func main() {
+	// Sample configuration with different types
+	cfg, _ := configx.NewBuilder().
+		WithDefaults(map[string]interface{}{
+			"server": map[string]interface{}{
+				"timeouts": map[string]interface{}{
+					"read":    "5s",
+					"write":   "10s",
+					"idle":    "60s",
+				},
+				"maxConnections": 100,
+				"tls": map[string]interface{}{
+					"enabled": true,
+					"certs": []string{
+						"/path/to/cert1",
+						"/path/to/cert2",
+					},
+				},
+			},
+		}).
+		Build()
+
+	// Access values with type conversion
+	readTimeout := cfg.Get("server.timeouts.read").AsDuration()
+	writeTimeout := cfg.Get("server.timeouts.write").AsDuration()
+	maxConn := cfg.Get("server.maxConnections").AsInt()
+	tlsEnabled := cfg.Get("server.tls.enabled").AsBool()
+	
+	fmt.Printf("Read Timeout: %s\n", readTimeout)
+	fmt.Printf("Write Timeout: %s\n", writeTimeout)
+	fmt.Printf("Max Connections: %d\n", maxConn)
+	fmt.Printf("TLS Enabled: %t\n", tlsEnabled)
+	
+	// Access array values
+	certs := cfg.Get("server.tls.certs").AsStringSlice()
+	for i, cert := range certs {
+		fmt.Printf("Certificate %d: %s\n", i+1, cert)
+	}
 }
 ```
 

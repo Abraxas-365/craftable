@@ -1,4 +1,4 @@
-package llm
+package aiproviders
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/Abraxas-365/craftale/ai/llm"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 	"github.com/openai/openai-go/packages/ssestream"
@@ -34,8 +35,8 @@ func NewOpenAIProvider(apiKey string, opts ...option.RequestOption) *OpenAIProvi
 }
 
 // Chat implements the LLM interface
-func (p *OpenAIProvider) Chat(ctx context.Context, messages []Message, opts ...Option) (Response, error) {
-	options := DefaultOptions()
+func (p *OpenAIProvider) Chat(ctx context.Context, messages []llm.Message, opts ...llm.Option) (llm.Response, error) {
+	options := llm.DefaultOptions()
 	for _, opt := range opts {
 		opt(options)
 	}
@@ -45,7 +46,7 @@ func (p *OpenAIProvider) Chat(ctx context.Context, messages []Message, opts ...O
 	for _, msg := range messages {
 		openAIMsg, err := convertToOpenAIMessage(msg)
 		if err != nil {
-			return Response{}, err
+			return llm.Response{}, err
 		}
 		openAIMessages = append(openAIMessages, openAIMsg)
 	}
@@ -103,7 +104,7 @@ func (p *OpenAIProvider) Chat(ctx context.Context, messages []Message, opts ...O
 	// Make the API call
 	completion, err := p.client.Chat.Completions.New(ctx, params)
 	if err != nil {
-		return Response{}, err
+		return llm.Response{}, err
 	}
 
 	// Convert the response
@@ -111,8 +112,8 @@ func (p *OpenAIProvider) Chat(ctx context.Context, messages []Message, opts ...O
 }
 
 // ChatStream implements the LLM interface for streaming responses
-func (p *OpenAIProvider) ChatStream(ctx context.Context, messages []Message, opts ...Option) (Stream, error) {
-	options := DefaultOptions()
+func (p *OpenAIProvider) ChatStream(ctx context.Context, messages []llm.Message, opts ...llm.Option) (llm.Stream, error) {
+	options := llm.DefaultOptions()
 	for _, opt := range opts {
 		opt(options)
 	}
@@ -192,23 +193,23 @@ type openAIStream struct {
 	stream      *ssestream.Stream[openai.ChatCompletionChunk]
 	accumulator openai.ChatCompletionAccumulator
 	lastError   error
-	current     Message
+	current     llm.Message
 }
 
-func (s *openAIStream) Next() (Message, error) {
+func (s *openAIStream) Next() (llm.Message, error) {
 	// If we already encountered an error, return it
 	if s.lastError != nil {
-		return Message{}, s.lastError
+		return llm.Message{}, s.lastError
 	}
 
 	// Get the next event
 	if !s.stream.Next() {
 		if err := s.stream.Err(); err != nil {
 			s.lastError = err
-			return Message{}, err
+			return llm.Message{}, err
 		}
 		s.lastError = io.EOF
-		return Message{}, io.EOF
+		return llm.Message{}, io.EOF
 	}
 
 	// Get the current chunk
@@ -216,19 +217,19 @@ func (s *openAIStream) Next() (Message, error) {
 	s.accumulator.AddChunk(chunk)
 
 	if len(chunk.Choices) == 0 {
-		return Message{}, nil
+		return llm.Message{}, nil
 	}
 
 	delta := chunk.Choices[0].Delta
 
 	// Update the current message
-	s.current.Role = RoleAssistant
+	s.current.Role = llm.RoleAssistant
 	s.current.Content += delta.Content
 
 	// Handle tool calls
 	if len(delta.ToolCalls) > 0 {
 		if s.current.ToolCalls == nil {
-			s.current.ToolCalls = make([]ToolCall, 0)
+			s.current.ToolCalls = make([]llm.ToolCall, 0)
 		}
 
 		for _, tc := range delta.ToolCalls {
@@ -246,10 +247,10 @@ func (s *openAIStream) Next() (Message, error) {
 
 			if !found && tc.ID != "" {
 				// Add new tool call
-				s.current.ToolCalls = append(s.current.ToolCalls, ToolCall{
+				s.current.ToolCalls = append(s.current.ToolCalls, llm.ToolCall{
 					ID:   tc.ID,
 					Type: "function",
-					Function: FunctionCall{
+					Function: llm.FunctionCall{
 						Name:      tc.Function.Name,
 						Arguments: tc.Function.Arguments,
 					},
@@ -268,13 +269,13 @@ func (s *openAIStream) Close() error {
 
 // Helper functions to convert between the two libraries
 
-func convertToOpenAIMessage(msg Message) (openai.ChatCompletionMessageParamUnion, error) {
+func convertToOpenAIMessage(msg llm.Message) (openai.ChatCompletionMessageParamUnion, error) {
 	switch msg.Role {
-	case RoleSystem:
+	case llm.RoleSystem:
 		return openai.SystemMessage(msg.Content), nil
-	case RoleUser:
+	case llm.RoleUser:
 		return openai.UserMessage(msg.Content), nil
-	case RoleAssistant:
+	case llm.RoleAssistant:
 		if len(msg.ToolCalls) > 0 {
 			toolCalls := make([]openai.ChatCompletionMessageToolCallParam, 0, len(msg.ToolCalls))
 			for _, tc := range msg.ToolCalls {
@@ -299,7 +300,7 @@ func convertToOpenAIMessage(msg Message) (openai.ChatCompletionMessageParamUnion
 		}
 
 		return openai.AssistantMessage(msg.Content), nil
-	case RoleFunction:
+	case llm.RoleFunction:
 		// Use the tool message approach for function messages
 		return openai.ChatCompletionMessageParamUnion{
 			OfTool: &openai.ChatCompletionToolMessageParam{
@@ -309,14 +310,14 @@ func convertToOpenAIMessage(msg Message) (openai.ChatCompletionMessageParamUnion
 				ToolCallID: msg.Name, // Using name for tool call ID
 			},
 		}, nil
-	case RoleTool:
+	case llm.RoleTool:
 		return openai.ToolMessage(msg.Content, msg.ToolCallID), nil
 	default:
 		return openai.ChatCompletionMessageParamUnion{}, errors.New("unsupported role: " + msg.Role)
 	}
 }
 
-func convertToOpenAITools(tools []Tool, functions []Function) []openai.ChatCompletionToolParam {
+func convertToOpenAITools(tools []llm.Tool, functions []llm.Function) []openai.ChatCompletionToolParam {
 	result := make([]openai.ChatCompletionToolParam, 0)
 
 	// Convert tools
@@ -400,13 +401,13 @@ func convertToJSONFormatParam() openai.ChatCompletionNewParamsResponseFormatUnio
 	}
 }
 
-func convertToResponseFormatParam(format *ResponseFormat) openai.ChatCompletionNewParamsResponseFormatUnion {
+func convertToResponseFormatParam(format *llm.ResponseFormat) openai.ChatCompletionNewParamsResponseFormatUnion {
 	switch format.Type {
-	case JSONObject:
+	case llm.JSONObject:
 		return openai.ChatCompletionNewParamsResponseFormatUnion{
 			OfJSONObject: &shared.ResponseFormatJSONObjectParam{},
 		}
-	case JSONSchema:
+	case llm.JSONSchema:
 		schema, ok := format.JSONSchema.(map[string]interface{})
 		if !ok {
 			// Try to convert to map if it's not already
@@ -435,28 +436,28 @@ func convertToResponseFormatParam(format *ResponseFormat) openai.ChatCompletionN
 	}
 }
 
-func convertFromOpenAIResponse(completion *openai.ChatCompletion) (Response, error) {
+func convertFromOpenAIResponse(completion *openai.ChatCompletion) (llm.Response, error) {
 	if len(completion.Choices) == 0 {
-		return Response{}, errors.New("no choices in response")
+		return llm.Response{}, errors.New("no choices in response")
 	}
 
 	// Get the first choice
 	choice := completion.Choices[0]
 
 	// Convert the message
-	message := Message{
+	message := llm.Message{
 		Role:    string(choice.Message.Role),
 		Content: choice.Message.Content,
 	}
 
 	// Handle tool calls
 	if len(choice.Message.ToolCalls) > 0 {
-		toolCalls := make([]ToolCall, 0, len(choice.Message.ToolCalls))
+		toolCalls := make([]llm.ToolCall, 0, len(choice.Message.ToolCalls))
 		for _, tc := range choice.Message.ToolCalls {
-			toolCalls = append(toolCalls, ToolCall{
+			toolCalls = append(toolCalls, llm.ToolCall{
 				ID:   tc.ID,
 				Type: "function",
-				Function: FunctionCall{
+				Function: llm.FunctionCall{
 					Name:      tc.Function.Name,
 					Arguments: tc.Function.Arguments,
 				},
@@ -466,15 +467,14 @@ func convertFromOpenAIResponse(completion *openai.ChatCompletion) (Response, err
 	}
 
 	// Convert usage
-	usage := Usage{
+	usage := llm.Usage{
 		PromptTokens:     int(completion.Usage.PromptTokens),
 		CompletionTokens: int(completion.Usage.CompletionTokens),
 		TotalTokens:      int(completion.Usage.TotalTokens),
 	}
 
-	return Response{
+	return llm.Response{
 		Message: message,
 		Usage:   usage,
 	}, nil
 }
-

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/Abraxas-365/craftale/ai/llm"
+	"github.com/Abraxas-365/craftale/ai/llm/aiproviders"
 	"github.com/openai/openai-go"
 )
 
@@ -20,7 +21,7 @@ func main() {
 	}
 
 	// Create the OpenAI provider
-	provider := llm.NewOpenAIProvider(apiKey)
+	provider := aiproviders.NewOpenAIProvider(apiKey)
 
 	// Create a client with the provider
 	client := llm.NewClient(provider)

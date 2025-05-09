@@ -13,6 +13,7 @@
 
 **Craftable** is a collection of high-quality, reusable Go packages designed to accelerate application development. It provides elegant solutions for common challenges like error handling, authentication, and CLI interactions.
 
+
 ## 📦 Packages
 
 ### errx - Extended Error Handling
@@ -49,7 +50,30 @@ A generic abstraction layer for working with different database stores:
 - **Change Notifications**: Real-time data change streams (MongoDB)
 - **Consistent Error Handling**: Detailed context for database errors
 
-## 📥 Installation
+### dtox - DTO/Model Conversion
+
+A generic package for type-safe conversion between DTOs and domain models:
+
+- **Type-safe Mappings**: Strongly-typed conversion between DTOs and domain models
+- **Field Mapping**: Flexible field name matching between different structures
+- **Validation**: Integrated validation with detailed error reporting
+- **Batch Operations**: Efficient processing of collections with parallel support
+- **Custom Conversion**: Support for custom conversion functions
+- **Partial Updates**: Simplified handling of partial object updates
+- **Reflection-Based**: Automatic field discovery and mapping
+
+### validatex - Struct Validation
+
+A flexible validation system using struct tags with structured error handling:
+
+- **Tag-based Validation**: Define validation rules directly in struct tags
+- **Rich Validation Rules**: Support for required fields, length/value constraints, patterns, etc.
+- **Structured Errors**: Detailed validation errors with field context
+- **Nested Validation**: Support for validating nested structs and slices
+- **Custom Validators**: Easily extend with custom validation functions
+- **Integration with errx**: Consistent error handling throughout your application
+
+## 🚀 Installation
 
 ```bash
 go get github.com/Abraxas-365/craftable
@@ -61,9 +85,11 @@ Or install specific packages:
 go get github.com/Abraxas-365/craftable/errx
 go get github.com/Abraxas-365/craftable/auth
 go get github.com/Abraxas-365/craftable/storex
+go get github.com/Abraxas-365/craftable/dtox
+go get github.com/Abraxas-365/craftable/validatex
 ```
 
-## 🚀 Example Usage
+## 📝 Example Usage
 
 ### Error Handling (errx)
 
@@ -250,100 +276,208 @@ func ExamplePagination(client *mongo.Client) {
 }
 ```
 
-#### Advanced Features: Bulk Operations, Transactions, Search
+### DTO/Model Conversion (dtox)
 
 ```go
 package main
 
 import (
-    "context"
-    "database/sql"
     "fmt"
+    "time"
     
-    "github.com/Abraxas-365/craftable/storex"
-    _ "github.com/lib/pq" // PostgreSQL driver
+    "github.com/Abraxas-365/craftable/dtox"
+    "github.com/Abraxas-365/craftable/errx"
 )
 
-// Define product model
-type Product struct {
-    ID          int     `json:"id"`
-    Name        string  `json:"name"`
-    Description string  `json:"description"`
-    Price       float64 `json:"price"`
-    CreatedAt   string  `json:"created_at"`
+// Define DTO and model types
+type UserDTO struct {
+    FullName string `json:"full_name"`
+    Email    string `json:"email"`
+    Age      int    `json:"age"`
 }
 
-func ExampleAdvancedFeatures(db *sql.DB) {
-    // Create a typed store for Products
-    productStore := storex.NewTypedSQL[Product](db).
-        WithTableName("products").
-        WithIDColumn("id")
+type User struct {
+    ID        string
+    FirstName string
+    LastName  string
+    Email     string
+    Age       int
+    CreatedAt time.Time
+}
 
-    ctx := context.Background()
-
-    // 1. Bulk operations
-    products := []Product{
-        {Name: "Product 1", Price: 19.99},
-        {Name: "Product 2", Price: 29.99},
-        {Name: "Product 3", Price: 39.99},
+func main() {
+    // Create a mapper with field mapping
+    mapper := dtox.NewMapper[UserDTO, User]().
+        WithFieldMapping("FullName", "FirstName").
+        WithValidation(func(dto UserDTO) error {
+            if dto.Age < 18 {
+                return fmt.Errorf("user must be at least 18 years old")
+            }
+            return nil
+        })
+    
+    // Convert DTO to model
+    dto := UserDTO{
+        FullName: "John Doe",
+        Email:    "john@example.com",
+        Age:      30,
     }
     
-    // Insert multiple products at once
-    err := productStore.BulkInsert(ctx, products)
+    user, err := mapper.ToModel(dto)
     if err != nil {
-        // Handle error
+        fmt.Printf("Error: %s\n", err)
         return
     }
     
-    // 2. Transaction support
-    err = productStore.WithTransaction(ctx, func(txCtx context.Context) error {
-        // All operations in this function are part of the same transaction
-        product := Product{Name: "Transaction Product", Price: 99.99}
-        
-        created, err := productStore.Create(txCtx, product)
-        if err != nil {
-            return err // Will cause rollback
-        }
-        
-        idStr := fmt.Sprintf("%d", created.ID)
-        return productStore.Delete(txCtx, idStr) // Success = commit, error = rollback
-    })
+    // The model now has FirstName = "John Doe"
+    fmt.Printf("User: %+v\n", user)
     
-    // 3. Full-text search
-    searchOpts := storex.SearchOptions{
-        Fields: []string{"name", "description"},
-        Limit:  10,
+    // Convert multiple DTOs to models
+    dtos := []UserDTO{
+        {FullName: "Jane Smith", Email: "jane@example.com", Age: 28},
+        {FullName: "Bob Johnson", Email: "bob@example.com", Age: 35},
     }
     
-    results, err := productStore.Search(ctx, "smartphone", searchOpts)
+    users, err := mapper.ToModels(dtos)
     if err != nil {
-        // Handle error
+        fmt.Printf("Error: %s\n", err)
         return
     }
     
-    fmt.Printf("Found %d matching products\n", len(results))
+    fmt.Printf("Converted %d users\n", len(users))
     
-    // 4. Query building
-    query := storex.NewQueryBuilder[Product]().
-        Where("price", ">", 50.0).
-        Where("name", "LIKE", "%phone%").
-        OrderBy("price", false).  // ascending order
-        Limit(20)
-        
-    // Convert to pagination options
-    queryOpts := query.ToPaginationOptions()
-    queryResults, err := productStore.Paginate(ctx, queryOpts)
+    // Handle partial updates
+    partialMapper := dtox.NewMapper[UserDTO, User]().WithPartial(true)
     
+    // Only fields that are non-zero in the DTO will be updated
+    partialDto := UserDTO{
+        Email: "newemail@example.com",
+        // Age and FullName are not set, so they won't be updated
+    }
+    
+    updatedUser, err := partialMapper.ApplyPartialUpdate(user, partialDto)
     if err != nil {
-        // Handle error
+        fmt.Printf("Error: %s\n", err)
         return
     }
     
-    fmt.Printf("Found %d matching products\n", queryResults.Page.Total)
+    // Email has been updated, but FirstName and Age remain unchanged
+    fmt.Printf("Updated user: %+v\n", updatedUser)
 }
 ```
 
-## 🔍 Design Principles
+### Struct Validation (validatex)
+
+```go
+package main
+
+import (
+    "fmt"
+    "net/http"
+    
+    "github.com/Abraxas-365/craftable/errx"
+    "github.com/Abraxas-365/craftable/validatex"
+)
+
+// Define a struct with validation rules
+type CreateUserRequest struct {
+    Username  string `json:"username" validatex:"required,min=3,max=50"`
+    Email     string `json:"email" validatex:"required,email"`
+    Age       int    `json:"age" validatex:"min=18"`
+    Password  string `json:"password" validatex:"required,min=8"`
+    Role      string `json:"role" validatex:"oneof=admin user guest"`
+}
+
+// Custom validation function for strong passwords
+func init() {
+    validatex.RegisterValidationFunc("strongpassword", func(value interface{}, param string) bool {
+        password, ok := value.(string)
+        if !ok {
+            return false
+        }
+        
+        // Check for minimum length, uppercase, lowercase, number, and special character
+        if len(password) < 8 {
+            return false
+        }
+        
+        hasUpper := false
+        hasLower := false
+        hasNumber := false
+        hasSpecial := false
+        
+        for _, char := range password {
+            switch {
+            case 'A' <= char && char <= 'Z':
+                hasUpper = true
+            case 'a' <= char && char <= 'z':
+                hasLower = true
+            case '0' <= char && char <= '9':
+                hasNumber = true
+            case char == '!' || char == '@' || char == '#' || char == '$' || char == '%':
+                hasSpecial = true
+            }
+        }
+        
+        return hasUpper && hasLower && hasNumber && hasSpecial
+    })
+}
+
+func HandleCreateUser(w http.ResponseWriter, r *http.Request) {
+    // Parse request body
+    var req CreateUserRequest
+    decoder := json.NewDecoder(r.Body)
+    if err := decoder.Decode(&req); err != nil {
+        errx.New("Invalid JSON payload", errx.TypeBadRequest).
+            WithHTTPStatus(http.StatusBadRequest).
+            ToHTTP(w)
+        return
+    }
+    
+    // Validate the request
+    if err := validatex.ValidateWithErrx(req); err != nil {
+        // err is an errx.Error with detailed validation information
+        err.ToHTTP(w)
+        return
+    }
+    
+    // Request is valid, proceed with user creation
+    // ...
+    
+    // Return success response
+    w.WriteHeader(http.StatusCreated)
+    json.NewEncoder(w).Encode(map[string]string{
+        "status":  "success",
+        "message": "User created successfully",
+    })
+}
+
+func main() {
+    // Example validation
+    user := CreateUserRequest{
+        Username: "jo", // too short
+        Email:    "not-an-email",
+        Age:      15,   // too young
+        Password: "weak",
+        Role:     "superuser", // not in allowed values
+    }
+    
+    if err := validatex.ValidateWithErrx(user); err != nil {
+        // Structured error with details about each validation failure
+        fmt.Printf("Validation failed: %s\n", err.Message)
+        
+        // Access detailed validation errors
+        for field, details := range err.Details {
+            fmt.Printf("Field %s: %v\n", field, details)
+        }
+        
+        // Can also be used directly in HTTP responses
+        // err.ToHTTP(responseWriter)
+    }
+}
+```
+
+## 🎨 Design Principles
 
 Craftable follows these core principles:
 
@@ -360,8 +494,10 @@ For detailed documentation and examples for each package, see:
 - [errx Documentation](https://pkg.go.dev/github.com/Abraxas-365/craftable/errx)
 - [auth Documentation](https://pkg.go.dev/github.com/Abraxas-365/craftable/auth)
 - [storex Documentation](https://pkg.go.dev/github.com/Abraxas-365/craftable/storex)
+- [dtox Documentation](https://pkg.go.dev/github.com/Abraxas-365/craftable/dtox)
+- [validatex Documentation](https://pkg.go.dev/github.com/Abraxas-365/craftable/validatex)
 
-## 📝 License
+## 📜 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 

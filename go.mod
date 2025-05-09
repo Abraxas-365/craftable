@@ -1,4 +1,4 @@
-module github.com/Conversia-AI/craftale
+module github.com/Abraxas-365/craftale
 
 go 1.24.2
 

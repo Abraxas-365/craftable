@@ -1,6 +1,6 @@
 package storex
 
-import "github.com/Conversia-AI/craftale/errx"
+import "github.com/Abraxas-365/craftale/errx"
 
 // Error registry for storex
 var (

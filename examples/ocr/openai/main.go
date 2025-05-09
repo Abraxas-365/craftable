@@ -44,4 +44,3 @@ func main() {
 	fmt.Printf("Processing Time: %d ms\n", result.Usage.ProcessingTime)
 	fmt.Printf("Token Usage: %+v\n", result.Usage)
 }
-

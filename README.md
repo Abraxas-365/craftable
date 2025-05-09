@@ -14,6 +14,37 @@
 **Craftable** is a collection of high-quality, reusable Go packages designed to accelerate application development. It provides elegant solutions for common challenges like error handling, authentication, and CLI interactions.
 
 
+## Table of Contents
+
+- [📚 Craftable Library](#-craftable-library)
+  - [Table of Contents](#table-of-contents)
+  - [📦 Packages](#-packages)
+    - [errx - Extended Error Handling](#errx---extended-error-handling)
+    - [auth - Flexible Authentication](#auth---flexible-authentication)
+    - [storex - Database Store Abstraction](#storex---database-store-abstraction)
+    - [dtox - DTO/Model Conversion](#dtox---dtomodel-conversion)
+    - [validatex - Struct Validation](#validatex---struct-validation)
+    - [ai - Artificial Intelligence Toolkit](#ai---artificial-intelligence-toolkit)
+      - [llm - Large Language Model Client](#llm---large-language-model-client)
+      - [embedding - Text Embedding Interface](#embedding---text-embedding-interface)
+      - [ocr - Optical Character Recognition](#ocr---optical-character-recognition)
+  - [🚀 Installation](#-installation)
+  - [📝 Example Usage](#-example-usage)
+    - [Error Handling (errx)](#error-handling-errx)
+    - [Authentication (auth)](#authentication-auth)
+    - [Database Store (storex)](#database-store-storex)
+      - [Basic CRUD Operations](#basic-crud-operations)
+      - [Pagination and Filtering](#pagination-and-filtering)
+    - [DTO/Model Conversion (dtox)](#dtomodel-conversion-dtox)
+    - [Struct Validation (validatex)](#struct-validation-validatex)
+    - [LLM Interaction](#llm-interaction)
+    - [Text Embedding](#text-embedding)
+    - [OCR Processing](#ocr-processing)
+  - [🎨 Design Principles](#-design-principles)
+  - [📚 Documentation](#-documentation)
+  - [📜 License](#-license)
+  - [🤝 Contributing](#-contributing)
+
 ## 📦 Packages
 
 ### errx - Extended Error Handling
@@ -73,6 +104,40 @@ A flexible validation system using struct tags with structured error handling:
 - **Custom Validators**: Easily extend with custom validation functions
 - **Integration with errx**: Consistent error handling throughout your application
 
+### ai - Artificial Intelligence Toolkit
+
+A collection of packages for working with AI services and capabilities:
+
+#### llm - Large Language Model Client
+
+Interact with large language models with a clean, flexible interface:
+
+- **Multiple Providers**: Support for various LLM providers (OpenAI, etc.)
+- **Streaming Support**: Stream responses for real-time interactions
+- **Message Management**: Structured conversation history handling
+- **Tool Integration**: Support for function calling and tool usage
+- **Type-safe Responses**: Strongly-typed message handling
+
+#### embedding - Text Embedding Interface
+
+Convert text into vector embeddings for semantic understanding:
+
+- **Document Processing**: Batch processing of document collections
+- **Query Embedding**: Specialized handling for query text
+- **Flexible Models**: Support for different embedding models and dimensions
+- **Usage Tracking**: Token and request usage monitoring
+- **Provider Abstraction**: Common interface across embedding providers
+
+#### ocr - Optical Character Recognition
+
+Extract text from images with confidence scores and structured results:
+
+- **Image Processing**: Process images from files or URLs
+- **Confidence Scoring**: Detailed confidence metrics for extracted text
+- **Text Blocks**: Structured information about detected text regions
+- **Multiple Languages**: Support for various languages and scripts
+- **Format Flexibility**: Works with different image formats
+
 ## 🚀 Installation
 
 ```bash
@@ -87,6 +152,9 @@ go get github.com/Abraxas-365/craftable/auth
 go get github.com/Abraxas-365/craftable/storex
 go get github.com/Abraxas-365/craftable/dtox
 go get github.com/Abraxas-365/craftable/validatex
+go get github.com/Abraxas-365/craftable/ai/llm
+go get github.com/Abraxas-365/craftable/ai/embedding
+go get github.com/Abraxas-365/craftable/ai/ocr
 ```
 
 ## 📝 Example Usage
@@ -477,6 +545,201 @@ func main() {
 }
 ```
 
+### LLM Interaction
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "io"
+    "os"
+
+    "github.com/Abraxas-365/craftable/ai/aiproviders"
+    "github.com/Abraxas-365/craftable/ai/llm"
+)
+
+func main() {
+    // Get API key from environment
+    apiKey := os.Getenv("OPENAI_API_KEY")
+    if apiKey == "" {
+        fmt.Println("Please set OPENAI_API_KEY environment variable")
+        os.Exit(1)
+    }
+
+    // Create the OpenAI provider
+    provider := aiproviders.NewOpenAIProvider(apiKey)
+
+    // Create a client with the provider
+    client := llm.NewClient(provider)
+
+    // Basic chat example
+    messages := []llm.Message{
+        llm.NewSystemMessage("You are a helpful assistant that provides concise answers."),
+        llm.NewUserMessage("What's the capital of France?"),
+    }
+
+    resp, err := client.Chat(context.Background(), messages,
+        llm.WithModel("gpt-4o"),
+        llm.WithTemperature(0.7),
+    )
+
+    if err != nil {
+        fmt.Printf("Error: %v\n", err)
+        return
+    }
+
+    // Print the response
+    fmt.Println("Assistant:", resp.Message.Content)
+
+    // Streaming example
+    stream, err := client.ChatStream(context.Background(), messages,
+        llm.WithModel("gpt-4o"),
+        llm.WithTemperature(0.7),
+    )
+
+    if err != nil {
+        fmt.Printf("Error: %v\n", err)
+        return
+    }
+
+    fmt.Print("Streaming response: ")
+    for {
+        msg, err := stream.Next()
+        if err == io.EOF {
+            break
+        }
+        if err != nil {
+            fmt.Printf("\nStream error: %v\n", err)
+            break
+        }
+
+        fmt.Print(msg.Content)
+    }
+    fmt.Println()
+    stream.Close()
+}
+```
+
+### Text Embedding
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "os"
+
+    "github.com/Abraxas-365/craftable/ai/aiproviders"
+    "github.com/Abraxas-365/craftable/ai/embedding"
+)
+
+func main() {
+    // Get API key from environment variable
+    apiKey := os.Getenv("OPENAI_API_KEY")
+    if apiKey == "" {
+        log.Fatal("OPENAI_API_KEY environment variable not set")
+    }
+
+    // Create a new OpenAI provider
+    provider := aiproviders.NewOpenAIProvider(apiKey)
+
+    // Create embedding client
+    embeddingClient := embedding.NewClient(provider)
+
+    // Embed documents
+    documents := []string{
+        "The quick brown fox jumps over the lazy dog",
+        "Paris is the capital of France",
+        "Machine learning is a subset of artificial intelligence",
+    }
+
+    embeddings, err := embeddingClient.EmbedDocuments(
+        context.Background(),
+        documents,
+        embedding.WithModel("text-embedding-3-small"),
+        embedding.WithDimensions(1536),
+    )
+    if err != nil {
+        log.Fatalf("Error generating embeddings: %v", err)
+    }
+
+    fmt.Printf("Generated %d embeddings\n", len(embeddings))
+    fmt.Printf("First embedding dimensions: %d\n", len(embeddings[0].Vector))
+
+    // Embed a query
+    query := "What is artificial intelligence?"
+    queryEmbedding, err := embeddingClient.EmbedQuery(
+        context.Background(),
+        query,
+        embedding.WithModel("text-embedding-3-small"),
+    )
+    if err != nil {
+        log.Fatalf("Error generating query embedding: %v", err)
+    }
+
+    fmt.Printf("Query embedding dimensions: %d\n", len(queryEmbedding.Vector))
+    fmt.Printf("Usage: %+v\n", queryEmbedding.Usage)
+}
+```
+
+### OCR Processing
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "os"
+
+    "github.com/Abraxas-365/craftable/ai/aiproviders"
+    "github.com/Abraxas-365/craftable/ai/ocr"
+)
+
+func main() {
+    // Get API key from environment variable
+    apiKey := os.Getenv("OPENAI_API_KEY")
+    if apiKey == "" {
+        log.Fatal("OPENAI_API_KEY environment variable not set")
+    }
+
+    // Create a new OpenAI provider
+    provider := aiproviders.NewOpenAIProvider(apiKey)
+
+    // Create OCR client
+    ocrClient := ocr.NewClient(provider)
+
+    // Extract text from an image URL
+    imageURL := "https://example.com/sample-image.jpg"
+    
+    result, err := ocrClient.ExtractTextFromURL(
+        context.Background(),
+        imageURL,
+        ocr.WithModel("gpt-4-vision"),
+        ocr.WithLanguage("auto"),
+        ocr.WithDetailsLevel("high"),
+    )
+    if err != nil {
+        log.Fatalf("Error extracting text from URL: %v", err)
+    }
+
+    fmt.Printf("Extracted Text:\n%s\n\n", result.Text)
+    fmt.Printf("Overall Confidence: %.2f\n", result.Confidence)
+    fmt.Printf("Number of Text Blocks: %d\n", len(result.Blocks))
+    
+    // Process text blocks
+    for i, block := range result.Blocks {
+        fmt.Printf("Block %d: '%s' (Confidence: %.2f)\n", 
+            i+1, block.Text, block.Confidence)
+    }
+}
+```
+
 ## 🎨 Design Principles
 
 Craftable follows these core principles:
@@ -496,6 +759,7 @@ For detailed documentation and examples for each package, see:
 - [storex Documentation](https://pkg.go.dev/github.com/Abraxas-365/craftable/storex)
 - [dtox Documentation](https://pkg.go.dev/github.com/Abraxas-365/craftable/dtox)
 - [validatex Documentation](https://pkg.go.dev/github.com/Abraxas-365/craftable/validatex)
+- [ai Documentation](https://pkg.go.dev/github.com/Abraxas-365/craftable/ai)
 
 ## 📜 License
 

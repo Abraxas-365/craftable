@@ -2,13 +2,18 @@ package aiproviders
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/Abraxas-365/craftale/ai/embedding"
 	"github.com/Abraxas-365/craftale/ai/llm"
+	"github.com/Abraxas-365/craftale/ai/ocr"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 	"github.com/openai/openai-go/packages/ssestream"
@@ -553,4 +558,296 @@ func convertToFloat32Slice(input []float64) []float32 {
 		result[i] = float32(v)
 	}
 	return result
+}
+
+func (p *OpenAIProvider) ExtractText(ctx context.Context, imageData []byte, opts ...ocr.Option) (ocr.Result, error) {
+	options := ocr.DefaultOptions()
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	// Encode image to base64
+	base64Image := base64.StdEncoding.EncodeToString(imageData)
+
+	// Create system message with instructions based on options
+	systemContent := "You are an OCR system that extracts text from images. "
+	if options.Language != "auto" {
+		systemContent += fmt.Sprintf("The text is in %s. ", options.Language)
+	}
+	if options.DetectOrientation {
+		systemContent += "Detect and account for text orientation. "
+	}
+
+	// Construct the prompt for the vision model
+	userContent := "Extract the text from this image. "
+
+	switch options.DetailsLevel {
+	case "high":
+		userContent += "Provide the text, confidence level, and approximate positions of text blocks."
+	case "medium":
+		userContent += "Provide the text and confidence level."
+	case "low":
+		userContent += "Just provide the extracted text, nothing else."
+	}
+
+	// Create the OpenAI API request parameters
+	openAIMessages := []openai.ChatCompletionMessageParamUnion{
+		openai.SystemMessage(systemContent),
+	}
+
+	// Create content parts for the user message
+	contentParts := []openai.ChatCompletionContentPartUnionParam{
+		{
+			OfText: &openai.ChatCompletionContentPartTextParam{
+				Type: constant.Text("text"),
+				Text: userContent,
+			},
+		},
+		{
+			OfImageURL: &openai.ChatCompletionContentPartImageParam{
+				Type: constant.ImageURL("image_url"),
+				ImageURL: openai.ChatCompletionContentPartImageImageURLParam{
+					URL:    fmt.Sprintf("data:image/jpeg;base64,%s", base64Image),
+					Detail: "high", // Use high detail for better OCR
+				},
+			},
+		},
+	}
+
+	// Create the user message with content parts
+	openAIMessages = append(openAIMessages, openai.ChatCompletionMessageParamUnion{
+		OfUser: &openai.ChatCompletionUserMessageParam{
+			Content: openai.ChatCompletionUserMessageParamContentUnion{
+				OfArrayOfContentParts: contentParts,
+			},
+		},
+	})
+
+	// Prepare params with the messages
+	params := openai.ChatCompletionNewParams{
+		Messages: openAIMessages,
+	}
+
+	// Set the model
+	modelToUse := options.Model
+	if modelToUse == "" {
+		modelToUse = "gpt-4-vision-preview"
+	}
+	params.Model = modelToUse
+
+	// Set max tokens - vision models often need higher limits
+	params.MaxTokens = openai.Int(1024)
+
+	// Set user if specified
+	if options.User != "" {
+		params.User = openai.String(options.User)
+	}
+
+	// Track time for processing
+	startTime := time.Now()
+
+	// Call the OpenAI API directly
+	completion, err := p.client.Chat.Completions.New(ctx, params)
+	if err != nil {
+		return ocr.Result{}, err
+	}
+
+	processingTime := int(time.Since(startTime).Milliseconds())
+
+	// Get the response content
+	if len(completion.Choices) == 0 {
+		return ocr.Result{}, errors.New("no response from API")
+	}
+
+	textContent := completion.Choices[0].Message.Content
+
+	// Create the result
+	result := ocr.Result{
+		Text: textContent,
+		Usage: ocr.Usage{
+			PromptTokens:     int(completion.Usage.PromptTokens),
+			CompletionTokens: int(completion.Usage.CompletionTokens),
+			TotalTokens:      int(completion.Usage.TotalTokens),
+			ProcessingTime:   processingTime,
+		},
+	}
+
+	// For higher detail levels, attempt to parse structure from the response
+	if options.DetailsLevel != "low" {
+		// Estimate confidence
+		result.Confidence = estimateConfidence(textContent)
+
+		// For high detail, attempt to parse text blocks
+		if options.DetailsLevel == "high" {
+			result.Blocks = parseTextBlocks(textContent)
+		}
+	}
+
+	return result, nil
+}
+
+// ExtractTextFromURL implements the ocr.OCRProvider interface
+func (p *OpenAIProvider) ExtractTextFromURL(ctx context.Context, imageURL string, opts ...ocr.Option) (ocr.Result, error) {
+	options := ocr.DefaultOptions()
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	// Create system message with instructions based on options
+	systemContent := "You are an OCR system that extracts text from images. "
+	if options.Language != "auto" {
+		systemContent += fmt.Sprintf("The text is in %s. ", options.Language)
+	}
+	if options.DetectOrientation {
+		systemContent += "Detect and account for text orientation. "
+	}
+
+	// Construct the prompt for the vision model
+	userContent := "Extract the text from this image. "
+
+	switch options.DetailsLevel {
+	case "high":
+		userContent += "Provide the text, confidence level, and approximate positions of text blocks."
+	case "medium":
+		userContent += "Provide the text and confidence level."
+	case "low":
+		userContent += "Just provide the extracted text, nothing else."
+	}
+
+	// Create the OpenAI API request parameters
+	openAIMessages := []openai.ChatCompletionMessageParamUnion{
+		openai.SystemMessage(systemContent),
+	}
+
+	// Create content parts for the user message
+	contentParts := []openai.ChatCompletionContentPartUnionParam{
+		{
+			OfText: &openai.ChatCompletionContentPartTextParam{
+				Type: constant.Text("text"),
+				Text: userContent,
+			},
+		},
+		{
+			OfImageURL: &openai.ChatCompletionContentPartImageParam{
+				Type: constant.ImageURL("image_url"),
+				ImageURL: openai.ChatCompletionContentPartImageImageURLParam{
+					URL:    imageURL,
+					Detail: "high", // Use high detail for better OCR
+				},
+			},
+		},
+	}
+
+	// Create the user message with content parts
+	openAIMessages = append(openAIMessages, openai.ChatCompletionMessageParamUnion{
+		OfUser: &openai.ChatCompletionUserMessageParam{
+			Content: openai.ChatCompletionUserMessageParamContentUnion{
+				OfArrayOfContentParts: contentParts,
+			},
+		},
+	})
+
+	// Prepare params with the messages
+	params := openai.ChatCompletionNewParams{
+		Messages: openAIMessages,
+	}
+
+	// Set the model
+	modelToUse := options.Model
+	if modelToUse == "" {
+		modelToUse = "gpt-4-vision-preview"
+	}
+	params.Model = modelToUse
+
+	// Set max tokens - vision models often need higher limits
+	params.MaxTokens = openai.Int(1024)
+
+	// Set user if specified
+	if options.User != "" {
+		params.User = openai.String(options.User)
+	}
+
+	// Track time for processing
+	startTime := time.Now()
+
+	// Call the OpenAI API directly
+	completion, err := p.client.Chat.Completions.New(ctx, params)
+	if err != nil {
+		return ocr.Result{}, err
+	}
+
+	processingTime := int(time.Since(startTime).Milliseconds())
+
+	// Get the response content
+	if len(completion.Choices) == 0 {
+		return ocr.Result{}, errors.New("no response from API")
+	}
+
+	textContent := completion.Choices[0].Message.Content
+
+	// Create the result
+	result := ocr.Result{
+		Text: textContent,
+		Usage: ocr.Usage{
+			PromptTokens:     int(completion.Usage.PromptTokens),
+			CompletionTokens: int(completion.Usage.CompletionTokens),
+			TotalTokens:      int(completion.Usage.TotalTokens),
+			ProcessingTime:   processingTime,
+		},
+	}
+
+	// For higher detail levels, attempt to parse structure from the response
+	if options.DetailsLevel != "low" {
+		// Estimate confidence
+		result.Confidence = estimateConfidence(textContent)
+
+		// For high detail, attempt to parse text blocks
+		if options.DetailsLevel == "high" {
+			result.Blocks = parseTextBlocks(textContent)
+		}
+	}
+
+	return result, nil
+}
+
+// Helper functions for OCR
+
+// Helper function to estimate confidence from text response
+func estimateConfidence(text string) float32 {
+	// This is a simple heuristic - in a real implementation you would
+	// parse the actual confidence values from the structured response
+	if strings.Contains(strings.ToLower(text), "low confidence") {
+		return 0.3
+	} else if strings.Contains(strings.ToLower(text), "medium confidence") {
+		return 0.6
+	} else if strings.Contains(strings.ToLower(text), "high confidence") {
+		return 0.9
+	}
+	return 0.7 // Default confidence
+}
+
+// Helper function to parse text blocks from response
+func parseTextBlocks(text string) []ocr.TextBlock {
+	// In a real implementation, you would parse the actual blocks
+	// from a structured response. This is just a placeholder.
+	blocks := []ocr.TextBlock{}
+
+	// Simple parsing logic - split by lines and treat each as a block
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if len(line) > 0 {
+			blocks = append(blocks, ocr.TextBlock{
+				Text:       line,
+				Confidence: 0.7, // Default confidence
+				BoundingBox: ocr.BoundingBox{
+					Y:      float32(i) / float32(len(lines)),
+					X:      0.1,
+					Width:  0.8,
+					Height: 1.0 / float32(len(lines)),
+				},
+			})
+		}
+	}
+
+	return blocks
 }

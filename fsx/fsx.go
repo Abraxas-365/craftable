@@ -16,24 +16,37 @@ type FileInfo struct {
 	Metadata    map[string]string // Additional metadata
 }
 
-// FileSystem defines the interface for file operations
-type FileSystem interface {
-	// Read operations
+// FileReader provides read-only operations
+type FileReader interface {
 	ReadFile(ctx context.Context, path string) ([]byte, error)
 	ReadFileStream(ctx context.Context, path string) (io.ReadCloser, error)
 	Stat(ctx context.Context, path string) (FileInfo, error)
 	List(ctx context.Context, path string) ([]FileInfo, error)
+	Exists(ctx context.Context, path string) (bool, error)
+}
 
-	// Write operations
+// FileWriter provides write operations
+type FileWriter interface {
 	WriteFile(ctx context.Context, path string, data []byte) error
 	WriteFileStream(ctx context.Context, path string, r io.Reader) error
 	CreateDir(ctx context.Context, path string) error
+}
 
-	// Delete operations
+// FileDeleter provides deletion operations
+type FileDeleter interface {
 	DeleteFile(ctx context.Context, path string) error
 	DeleteDir(ctx context.Context, path string, recursive bool) error
+}
 
-	// Path operations
+// PathOperations provides path manipulation functionality
+type PathOperations interface {
 	Join(elem ...string) string
-	Exists(ctx context.Context, path string) (bool, error)
+}
+
+// FileSystem combines all file operations
+type FileSystem interface {
+	FileReader
+	FileWriter
+	FileDeleter
+	PathOperations
 }

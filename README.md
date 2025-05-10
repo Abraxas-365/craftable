@@ -28,6 +28,7 @@
       - [llm - Large Language Model Client](#llm---large-language-model-client)
       - [embedding - Text Embedding Interface](#embedding---text-embedding-interface)
       - [ocr - Optical Character Recognition](#ocr---optical-character-recognition)
+      - [speech - Text-to-Speech and Speech-to-Text](#speech---text-to-speech-and-speech-to-text)
   - [🚀 Installation](#-installation)
   - [📝 Example Usage](#-example-usage)
     - [Error Handling (errx)](#error-handling-errx)
@@ -138,6 +139,18 @@ Extract text from images with confidence scores and structured results:
 - **Text Blocks**: Structured information about detected text regions
 - **Multiple Languages**: Support for various languages and scripts
 - **Format Flexibility**: Works with different image formats
+
+#### speech - Text-to-Speech and Speech-to-Text
+
+Convert between text and speech with multiple voice and language options:
+
+- **Text-to-Speech Synthesis**: Generate natural speech from text
+- **Speech-to-Text Transcription**: Transcribe audio to text
+- **Multiple Voices**: Support for different voices and speech styles
+- **Speech Rate Control**: Adjust speed of generated speech
+- **Audio Format Options**: Support for various audio formats (MP3, WAV, PCM)
+- **Streaming Support**: Process audio in real-time
+- **Provider Abstraction**: Consistent interface across speech providers
 
 ### configx - Advanced Configuration Management
 
@@ -754,6 +767,100 @@ func main() {
     }
 }
 ```
+### Speech Processing
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+
+	"github.com/Abraxas-365/craftable/ai/aiproviders"
+	"github.com/Abraxas-365/craftable/ai/speech"
+	"github.com/openai/openai-go"
+)
+
+func main() {
+	// Get API key
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	
+	// Create provider and clients
+	provider := aiproviders.NewOpenAIProvider(apiKey)
+	ttsClient := speech.NewTTSClient(provider)
+	sttClient := speech.NewSTTClient(provider)
+	
+	// Text-to-Speech example
+	text := "Hello world! This is text converted to speech."
+	audio, err := ttsClient.Synthesize(context.Background(), text,
+		speech.WithTTSModel(string(openai.SpeechModelTTS1HD)),
+		speech.WithVoice("nova"),
+		speech.WithOutputFormat(speech.AudioFormatMP3),
+	)
+	if err != nil {
+		fmt.Printf("Synthesis error: %v\n", err)
+		return
+	}
+	defer audio.Content.Close()
+	
+	// Save to file
+	outputFile := "output.mp3"
+	file, err := os.Create(outputFile)
+	if err != nil {
+		fmt.Printf("Error creating file: %v\n", err)
+		return
+	}
+	defer file.Close()
+	
+	if _, err := io.Copy(file, audio.Content); err != nil {
+		fmt.Printf("Error saving audio: %v\n", err)
+		return
+	}
+	
+	fmt.Printf("Audio saved to %s\n", outputFile)
+	fmt.Printf("Sample rate: %d Hz, Format: %s\n", audio.SampleRate, audio.Format)
+	
+	// Speech-to-Text example
+	inputFile := "input.mp3"
+	if _, err := os.Stat(inputFile); os.IsNotExist(err) {
+		// If the input file doesn't exist, use the file we just created
+		fmt.Printf("Input file not found, using generated audio: %s\n", outputFile)
+		inputFile = outputFile
+	}
+	
+	transcript, err := sttClient.TranscribeFile(context.Background(), inputFile,
+		speech.WithSTTModel(string(openai.AudioModelWhisper1)),
+		speech.WithLanguage("en"),
+	)
+	if err != nil {
+		fmt.Printf("Transcription error: %v\n", err)
+		return
+	}
+	
+	fmt.Println("Transcribed text:", transcript.Text)
+	
+	// Example of using the Transcribe method with a file reader
+	file, err = os.Open(inputFile)
+	if err != nil {
+		fmt.Printf("Error opening audio file: %v\n", err)
+		return
+	}
+	defer file.Close()
+	
+	transcript, err = sttClient.Transcribe(context.Background(), file,
+		speech.WithSTTModel(string(openai.AudioModelWhisper1)),
+	)
+	if err != nil {
+		fmt.Printf("Direct transcription error: %v\n", err)
+		return
+	}
+	
+	fmt.Println("Direct transcription result:", transcript.Text)
+}
+
 ### configx - Configuration Management
 
 ```go

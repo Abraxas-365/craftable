@@ -14,8 +14,10 @@ import (
 	"github.com/Abraxas-365/craftale/ai/embedding"
 	"github.com/Abraxas-365/craftale/ai/llm"
 	"github.com/Abraxas-365/craftale/ai/ocr"
+	"github.com/Abraxas-365/craftale/ai/speech"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
+	"github.com/openai/openai-go/packages/param"
 	"github.com/openai/openai-go/packages/ssestream"
 	"github.com/openai/openai-go/shared"
 	"github.com/openai/openai-go/shared/constant"
@@ -850,4 +852,119 @@ func parseTextBlocks(text string) []ocr.TextBlock {
 	}
 
 	return blocks
+}
+
+func (p *OpenAIProvider) Synthesize(ctx context.Context, text string, opts ...speech.SynthesisOption) (speech.Audio, error) {
+	// Apply options
+	options := speech.SynthesisOptions{
+		Model:       string(openai.SpeechModelTTS1),
+		Voice:       "alloy",
+		AudioFormat: speech.AudioFormatMP3,
+		SpeechRate:  1.0,
+	}
+
+	for _, opt := range opts {
+		opt(&options)
+	}
+
+	// Map our format to OpenAI's format
+	responseFormat := openai.AudioSpeechNewParamsResponseFormatMP3
+	switch options.AudioFormat {
+	case speech.AudioFormatMP3:
+		responseFormat = openai.AudioSpeechNewParamsResponseFormatMP3
+	case speech.AudioFormatPCM:
+		responseFormat = openai.AudioSpeechNewParamsResponseFormatPCM
+	case speech.AudioFormatOGG:
+		responseFormat = openai.AudioSpeechNewParamsResponseFormatOpus
+	case speech.AudioFormatWAV:
+		responseFormat = openai.AudioSpeechNewParamsResponseFormatPCM
+	}
+
+	// Map our voice to OpenAI's voice format
+	voice := openai.AudioSpeechNewParamsVoiceAlloy
+	switch strings.ToLower(options.Voice) {
+	case "alloy":
+		voice = openai.AudioSpeechNewParamsVoiceAlloy
+	case "echo":
+		voice = openai.AudioSpeechNewParamsVoiceEcho
+	case "fable":
+		voice = openai.AudioSpeechNewParamsVoiceFable
+	case "onyx":
+		voice = openai.AudioSpeechNewParamsVoiceOnyx
+	case "nova":
+		voice = openai.AudioSpeechNewParamsVoiceNova
+	case "shimmer":
+		voice = openai.AudioSpeechNewParamsVoiceShimmer
+	}
+
+	// Create params with required fields
+	params := openai.AudioSpeechNewParams{
+		Model:          options.Model,
+		Input:          text,
+		Voice:          voice,
+		ResponseFormat: responseFormat,
+	}
+
+	// Add optional Speed parameter if specified
+	if options.SpeechRate != 1.0 {
+		params.Speed = param.NewOpt(float64(options.SpeechRate))
+	}
+
+	// Make the API call
+	res, err := p.client.Audio.Speech.New(ctx, params)
+	if err != nil {
+		return speech.Audio{}, fmt.Errorf("openai speech synthesis error: %w", err)
+	}
+
+	// Determine sample rate based on the model
+	sampleRate := 24000 // Default for TTS-1
+	if options.SampleRate > 0 {
+		sampleRate = options.SampleRate
+	}
+
+	return speech.Audio{
+		Content:    res.Body,
+		Format:     options.AudioFormat,
+		SampleRate: sampleRate,
+		Usage: speech.TTSUsage{
+			InputCharacters: len(text),
+		},
+	}, nil
+}
+
+// Transcribe converts speech audio to text using OpenAI's transcription API
+func (p *OpenAIProvider) Transcribe(ctx context.Context, audio io.Reader, opts ...speech.TranscriptionOption) (speech.Transcript, error) {
+	// Apply options
+	options := speech.TranscriptionOptions{
+		Model:      string(openai.AudioModelWhisper1),
+		Language:   "",
+		Timestamps: false,
+	}
+
+	for _, opt := range opts {
+		opt(&options)
+	}
+
+	// Prepare API call parameters with required fields
+	params := openai.AudioTranscriptionNewParams{
+		Model: options.Model,
+		File:  audio,
+	}
+
+	// Add optional Language parameter if specified
+	if options.Language != "" {
+		params.Language = param.NewOpt(options.Language)
+	}
+
+	// Make the API call
+	response, err := p.client.Audio.Transcriptions.New(ctx, params)
+	if err != nil {
+		return speech.Transcript{}, fmt.Errorf("openai transcription error: %w", err)
+	}
+
+	result := speech.Transcript{
+		Text: response.Text,
+	}
+
+	return result, nil
 }

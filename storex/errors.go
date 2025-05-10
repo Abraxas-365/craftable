@@ -51,4 +51,3 @@ func IsInvalidQuery(err error) bool {
 func IsInvalidID(err error) bool {
 	return errx.IsCode(err, ErrInvalidID)
 }
-

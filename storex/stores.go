@@ -235,4 +235,3 @@ type ChangeStream[T any] interface {
 	// Watch creates a stream of change events
 	Watch(ctx context.Context, filter map[string]any) (<-chan ChangeEvent[T], error)
 }
-

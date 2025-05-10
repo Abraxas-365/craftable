@@ -489,4 +489,3 @@ func extractIDValue(item interface{}, idField string) interface{} {
 	// For simplicity, this is a placeholder
 	return nil
 }
-

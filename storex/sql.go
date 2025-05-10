@@ -751,4 +751,3 @@ func createPlaceholders(count int) string {
 	}
 	return strings.Join(placeholders, ", ")
 }
-

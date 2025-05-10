@@ -227,7 +227,7 @@ import (
     "time"
     
     "github.com/Abraxas-365/craftable/auth"
-    "github.com/Abraxas-365/craftable/auth/providers"
+    "github.com/Abraxas-365/craftable/auth/authproviders"
 )
 
 func main() {
@@ -244,7 +244,7 @@ func main() {
     )
     
     // Register providers
-    googleProvider := providers.NewGoogleProvider(
+    googleProvider := authproviders.NewGoogleProvider(
         "client-id", 
         "client-secret", 
         "https://your-app.com/auth/callback/google",

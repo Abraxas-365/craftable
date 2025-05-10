@@ -4,7 +4,7 @@ import (
 	"errors"
 	"reflect"
 
-	"github.com/Abraxas-365/craftale/errx"
+	"github.com/Abraxas-365/craftable/errx"
 )
 
 // Validatable is an interface for types that provide their own validation

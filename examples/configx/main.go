@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/Abraxas-365/craftale/configx"
+	"github.com/Abraxas-365/craftable/configx"
 )
 
 func main() {

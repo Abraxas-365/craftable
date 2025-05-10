@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/Abraxas-365/craftale/fsx"
-	"github.com/Abraxas-365/craftale/fsx/fsxprovider"
+	"github.com/Abraxas-365/craftable/fsx"
+	"github.com/Abraxas-365/craftable/fsx/fsxprovider"
 )
 
 //---------- Text-to-Speech (TTS) ----------//

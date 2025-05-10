@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/Abraxas-365/craftale/errx"
+	"github.com/Abraxas-365/craftable/errx"
 )
 
 // ValidationRule defines a validation rule for a specific field

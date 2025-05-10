@@ -7,8 +7,8 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/Abraxas-365/craftale/errx"
-	"github.com/Abraxas-365/craftale/validatex"
+	"github.com/Abraxas-365/craftable/errx"
+	"github.com/Abraxas-365/craftable/validatex"
 )
 
 // Basic example demonstrating simple validation rules

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/Abraxas-365/craftale/errx"
+	"github.com/Abraxas-365/craftable/errx"
 )
 
 // ValidationErrorsToHTTP writes validation errors to an HTTP response

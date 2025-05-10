@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Abraxas-365/craftale/auth"
-	"github.com/Abraxas-365/craftale/errx"
+	"github.com/Abraxas-365/craftable/auth"
+	"github.com/Abraxas-365/craftable/errx"
 )
 
 const (

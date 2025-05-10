@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/Abraxas-365/craftale/fsx/fsxprovider"
+	"github.com/Abraxas-365/craftable/fsx/fsxprovider"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )

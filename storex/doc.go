@@ -20,7 +20,7 @@
 //
 //	import (
 //		"context"
-//		"github.com/Abraxas-365/craftale/storex"
+//		"github.com/Abraxas-365/craftable/storex"
 //		"go.mongodb.org/mongo-driver/mongo"
 //	)
 //
@@ -94,7 +94,7 @@
 //	import (
 //		"context"
 //		"fmt"
-//		"github.com/Abraxas-365/craftale/storex"
+//		"github.com/Abraxas-365/craftable/storex"
 //		"go.mongodb.org/mongo-driver/mongo"
 //	)
 //
@@ -150,7 +150,7 @@
 //		"context"
 //		"database/sql"
 //		"fmt"
-//		"github.com/Abraxas-365/craftale/storex"
+//		"github.com/Abraxas-365/craftable/storex"
 //		_ "github.com/lib/pq" // PostgreSQL driver
 //	)
 //
@@ -231,7 +231,7 @@
 //
 //	import (
 //		"context"
-//		"github.com/Abraxas-365/craftale/storex"
+//		"github.com/Abraxas-365/craftable/storex"
 //		"go.mongodb.org/mongo-driver/mongo"
 //	)
 //
@@ -296,7 +296,7 @@
 //	import (
 //		"context"
 //		"database/sql"
-//		"github.com/Abraxas-365/craftale/storex"
+//		"github.com/Abraxas-365/craftable/storex"
 //	)
 //
 //	func ExampleTransactions(db *sql.DB) {
@@ -338,7 +338,7 @@
 //
 //	import (
 //		"context"
-//		"github.com/Abraxas-365/craftale/storex"
+//		"github.com/Abraxas-365/craftable/storex"
 //		"go.mongodb.org/mongo-driver/mongo"
 //	)
 //
@@ -374,7 +374,7 @@
 //	import (
 //		"context"
 //		"fmt"
-//		"github.com/Abraxas-365/craftale/storex"
+//		"github.com/Abraxas-365/craftable/storex"
 //	)
 //
 //	func ExampleSearch(db *sql.DB) {
@@ -410,7 +410,7 @@
 //	import (
 //		"context"
 //		"fmt"
-//		"github.com/Abraxas-365/craftale/storex"
+//		"github.com/Abraxas-365/craftable/storex"
 //		"go.mongodb.org/mongo-driver/mongo"
 //	)
 //
@@ -456,8 +456,8 @@
 //
 //	import (
 //		"fmt"
-//		"github.com/Abraxas-365/craftale/errx"
-//		"github.com/Abraxas-365/craftale/storex"
+//		"github.com/Abraxas-365/craftable/errx"
+//		"github.com/Abraxas-365/craftable/storex"
 //	)
 //
 //	func ExampleErrorHandling(err error) {

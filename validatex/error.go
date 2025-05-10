@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/Abraxas-365/craftale/errx"
+	"github.com/Abraxas-365/craftable/errx"
 )
 
 // Error registry for validatex

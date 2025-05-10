@@ -1,4 +1,4 @@
-module github.com/Abraxas-365/craftale
+module github.com/Abraxas-365/craftable
 
 go 1.24.2
 

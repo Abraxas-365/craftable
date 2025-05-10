@@ -1,6 +1,6 @@
 package storex
 
-import "github.com/Abraxas-365/craftale/errx"
+import "github.com/Abraxas-365/craftable/errx"
 
 // Error registry for storex
 var (

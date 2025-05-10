@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/Abraxas-365/craftale/ai/aiproviders"
-	"github.com/Abraxas-365/craftale/ai/llm"
+	"github.com/Abraxas-365/craftable/ai/aiproviders"
+	"github.com/Abraxas-365/craftable/ai/llm"
 	"github.com/openai/openai-go"
 )
 

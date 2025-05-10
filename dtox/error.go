@@ -3,7 +3,7 @@ package dtox
 import (
 	"net/http"
 
-	"github.com/Abraxas-365/craftale/errx"
+	"github.com/Abraxas-365/craftable/errx"
 )
 
 // ErrorRegistry holds all error definitions for the dtox package

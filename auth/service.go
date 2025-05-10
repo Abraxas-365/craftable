@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/Abraxas-365/craftale/errx"
+	"github.com/Abraxas-365/craftable/errx"
 	"github.com/golang-jwt/jwt/v5"
 )
 

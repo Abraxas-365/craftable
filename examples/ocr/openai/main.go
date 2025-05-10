@@ -6,8 +6,8 @@ import (
 	"log"
 	"os"
 
-	"github.com/Abraxas-365/craftale/ai/aiproviders"
-	"github.com/Abraxas-365/craftale/ai/ocr"
+	"github.com/Abraxas-365/craftable/ai/aiproviders"
+	"github.com/Abraxas-365/craftable/ai/ocr"
 )
 
 func main() {

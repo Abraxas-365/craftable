@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Abraxas-365/craftale/dtox"
-	"github.com/Abraxas-365/craftale/errx"
-	"github.com/Abraxas-365/craftale/validatex"
+	"github.com/Abraxas-365/craftable/dtox"
+	"github.com/Abraxas-365/craftable/errx"
+	"github.com/Abraxas-365/craftable/validatex"
 )
 
 // Basic example of DTO to Model conversion

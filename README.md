@@ -24,6 +24,7 @@
     - [storex - Database Store Abstraction](#storex---database-store-abstraction)
     - [dtox - DTO/Model Conversion](#dtox---dtomodel-conversion)
     - [validatex - Struct Validation](#validatex---struct-validation)
+    - [docx - API Documentation Generator](#docx---api-documentation-generator)
     - [ai - Artificial Intelligence Toolkit](#ai---artificial-intelligence-toolkit)
       - [llm - Large Language Model Client](#llm---large-language-model-client)
       - [embedding - Text Embedding Interface](#embedding---text-embedding-interface)

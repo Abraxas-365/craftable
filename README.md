@@ -940,7 +940,7 @@ func main() {
 		}).
 		FromDotEnv(".env").          // Load from .env file
 		FromEnv("APP_").             // Load from environment variables
-		FromFile("config.yaml"). // Load from YAML file
+		FromFile("config.yaml").     // Load from YAML file
 		Build()
 
 	if err != nil {

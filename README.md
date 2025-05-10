@@ -623,7 +623,6 @@ createUserEndpoint := docx.NewEndpoint("/users", docx.POST).
         "scope": "admin",
     }).
     WithHeader("Content-Type", "application/json", true).
-    WithHeader("Authorization", "Bearer YOUR_JWT_TOKEN", true).
     WithRequestExample(UserCreateRequest{
         Name:     "John Doe",
         Email:    "john@example.com",

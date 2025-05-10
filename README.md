@@ -29,6 +29,8 @@
       - [embedding - Text Embedding Interface](#embedding---text-embedding-interface)
       - [ocr - Optical Character Recognition](#ocr---optical-character-recognition)
       - [speech - Text-to-Speech and Speech-to-Text](#speech---text-to-speech-and-speech-to-text)
+    - [configx- Configuration Management](#configx---advanced-configuration-management)
+
   - [🚀 Installation](#-installation)
   - [📝 Example Usage](#-example-usage)
     - [Error Handling (errx)](#error-handling-errx)
@@ -41,6 +43,7 @@
     - [LLM Interaction](#llm-interaction)
     - [Text Embedding](#text-embedding)
     - [OCR Processing](#ocr-processing)
+    - [Speech Processing](#speech-processing)
     - [Configuration Management(configx)](#configx-configuration-management)
   - [🎨 Design Principles](#-design-principles)
   - [📚 Documentation](#-documentation)
@@ -860,6 +863,7 @@ func main() {
 	
 	fmt.Println("Direct transcription result:", transcript.Text)
 }
+```
 
 ### configx - Configuration Management
 

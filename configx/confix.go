@@ -3,6 +3,7 @@ package configx
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"reflect"
 	"strconv"
@@ -858,7 +859,8 @@ func WithSource(source Source) Option {
 func WithFile(path string, priority int) Option {
 	return func(c *configuration) {
 		// This would normally call NewFileSource, which would be in sources.go
-		// For this example, we'll just mention that this would be implemented there
+		//TODO
+		log.Println("File source not implemented")
 	}
 }
 
@@ -873,7 +875,8 @@ func WithEnv(prefix string, priority int) Option {
 func WithMap(values map[string]interface{}, name string, priority int) Option {
 	return func(c *configuration) {
 		// This would normally call NewMapSource, which would be in sources.go
-		// For this example, we'll just mention that this would be implemented there
+		//TODO
+		log.Println("Map source not implemented")
 	}
 }
 

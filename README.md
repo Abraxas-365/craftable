@@ -40,6 +40,7 @@
       - [Pagination and Filtering](#pagination-and-filtering)
     - [DTO/Model Conversion (dtox)](#dtomodel-conversion-dtox)
     - [Struct Validation (validatex)](#struct-validation-validatex)
+    - [API Documentation (docx)](#api-documentation-docx)
     - [LLM Interaction](#llm-interaction)
     - [Text Embedding](#text-embedding)
     - [OCR Processing](#ocr-processing)
@@ -108,6 +109,20 @@ A flexible validation system using struct tags with structured error handling:
 - **Nested Validation**: Support for validating nested structs and slices
 - **Custom Validators**: Easily extend with custom validation functions
 - **Integration with errx**: Consistent error handling throughout your application
+
+### docx - API Documentation Generator
+
+An intuitive API documentation generator that produces multiple formats from your code:
+
+- **Code-First Approach**: Generate documentation directly from your API definitions
+- **Multiple Output Formats**: Export to JSON, Markdown, HTML, and cURL examples
+- **Fiber Integration**: Seamless integration with the Fiber web framework
+- **Endpoint Schema Generation**: Automatically document request and response schemas
+- **Authentication Documentation**: Document security requirements and token formats
+- **Example Request/Response**: Include example payloads for better understanding
+- **Struct Reflection**: Automatically extract DTO schemas from Go structs
+- **Customizable Headers**: Document required and optional headers
+- **Type-Safe Building**: Fluent, chainable API for documentation building
 
 ### ai - Artificial Intelligence Toolkit
 
@@ -575,6 +590,67 @@ func main() {
     }
 }
 ```
+### API Documentation (docx)
+
+```go
+import "github.com/Abraxas-365/craftable/docx"
+
+// Define your DTOs
+type UserCreateRequest struct {
+    Name     string `json:"name"`
+    Email    string `json:"email"`
+    Password string `json:"password"`
+}
+
+type UserResponse struct {
+    ID    string `json:"id"`
+    Name  string `json:"name"`
+    Email string `json:"email"`
+}
+
+// Create a router documentation
+apiDoc := docx.NewRouterDoc("/api/v1")
+
+// Document an endpoint with authentication
+createUserEndpoint := docx.NewEndpoint("/users", docx.POST).
+    WithDescription("Create a new user").
+    WithSummary("User Registration").
+    WithTags("users", "auth").
+    WithRequestDTO(UserCreateRequest{}).
+    WithResponseDTO(UserResponse{}).
+    WithAuth(docx.Bearer, map[string]string{
+        "description": "JWT token required",
+        "scope": "admin",
+    }).
+    WithHeader("Content-Type", "application/json", true).
+    WithHeader("Authorization", "Bearer YOUR_JWT_TOKEN", true).
+    WithRequestExample(UserCreateRequest{
+        Name:     "John Doe",
+        Email:    "john@example.com",
+        Password: "secure123",
+    }).
+    WithResponseExample(UserResponse{
+        ID:    "123",
+        Name:  "John Doe",
+        Email: "john@example.com",
+    })
+
+// Add endpoint to router doc
+apiDoc.AddEndpoint(createUserEndpoint)
+
+// Create a generator
+generator := docx.NewGenerator().AddRouter(apiDoc)
+
+// Generate JSON documentation
+generator.GenerateJSON("docs/api.json")
+
+// Generate curl documentation
+generator.GenerateCurlDocs("http://localhost:3000", "docs/curl.md")
+
+// Register documentation in Fiber app
+apiDoc.RegisterWithFiber(app, "/api/docs")
+```
+
 
 ### LLM Interaction
 

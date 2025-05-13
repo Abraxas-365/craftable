@@ -37,6 +37,20 @@ func WithMaxMessages(max int) MemoryOption {
 	}
 }
 
+// WithSystemPrompt sets the system prompt
+func WithSystemPrompt(prompt string) MemoryOption {
+	return func(m *DefaultMemory) {
+		m.systemPrompt = prompt
+		// Add system message if it doesn't exist
+		if len(m.messages) == 0 || m.messages[0].Role != llm.RoleSystem {
+			m.messages = append([]llm.Message{llm.NewSystemMessage(prompt)}, m.messages...)
+		} else {
+			// Update existing system message
+			m.messages[0] = llm.NewSystemMessage(prompt)
+		}
+	}
+}
+
 // DefaultMemory implements the Memory interface with in-memory storage
 type DefaultMemory struct {
 	systemPrompt string
@@ -44,11 +58,11 @@ type DefaultMemory struct {
 	maxMessages  int
 }
 
-// NewMemory creates a new memory instance with a system prompt
-func NewMemory(systemPrompt string, opts ...MemoryOption) *DefaultMemory {
+// NewMemory creates a new memory instance
+func NewMemory(opts ...MemoryOption) *DefaultMemory {
 	m := &DefaultMemory{
-		systemPrompt: systemPrompt,
-		messages:     []llm.Message{llm.NewSystemMessage(systemPrompt)},
+		systemPrompt: "",
+		messages:     []llm.Message{},
 		maxMessages:  100,
 	}
 
@@ -70,14 +84,24 @@ func (m *DefaultMemory) Add(message llm.Message) error {
 
 	if len(m.messages) > m.maxMessages {
 		excess := len(m.messages) - m.maxMessages
-		m.messages = append([]llm.Message{m.messages[0]}, m.messages[excess+1:]...)
+
+		// Make sure we keep the system message if it exists
+		if len(m.messages) > 0 && m.messages[0].Role == llm.RoleSystem {
+			m.messages = append([]llm.Message{m.messages[0]}, m.messages[excess+1:]...)
+		} else {
+			m.messages = m.messages[excess:]
+		}
 	}
 
 	return nil
 }
 
 func (m *DefaultMemory) Clear() error {
-	m.messages = []llm.Message{llm.NewSystemMessage(m.systemPrompt)}
+	if m.systemPrompt != "" {
+		m.messages = []llm.Message{llm.NewSystemMessage(m.systemPrompt)}
+	} else {
+		m.messages = []llm.Message{}
+	}
 	return nil
 }
 
@@ -87,6 +111,15 @@ func (m *DefaultMemory) SystemPrompt() (string, error) {
 
 func (m *DefaultMemory) UpdateSystemPrompt(content string) error {
 	m.systemPrompt = content
+
+	if content == "" {
+		// Remove system message if it exists
+		if len(m.messages) > 0 && m.messages[0].Role == llm.RoleSystem {
+			m.messages = m.messages[1:]
+		}
+		return nil
+	}
+
 	if len(m.messages) > 0 && m.messages[0].Role == llm.RoleSystem {
 		m.messages[0] = llm.NewSystemMessage(content)
 	} else {

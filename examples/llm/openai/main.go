@@ -32,8 +32,7 @@ func main() {
 	tools := toolx.FromToolx(weatherTool)
 
 	// Create memory with system prompt
-	mem := memoryx.NewMemory("You are a helpful assistant that can check weather conditions.")
-
+	mem := memoryx.NewMemory(memoryx.WithSystemPrompt("You are a helpful assistant that can check weather conditions."))
 	// Create the agent
 	myAgent := agentx.New(
 		client,

@@ -9,6 +9,7 @@ require (
 	github.com/fatih/color v1.18.0
 	github.com/gofiber/fiber/v2 v2.52.6
 	github.com/golang-jwt/jwt/v5 v5.2.2
+	github.com/lib/pq v1.10.9
 	github.com/openai/openai-go v0.1.0-beta.10
 	github.com/spf13/cobra v1.9.1
 	go.mongodb.org/mongo-driver v1.17.3

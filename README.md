@@ -27,6 +27,9 @@
     - [docx - API Documentation Generator](#docx---api-documentation-generator)
     - [ai - Artificial Intelligence Toolkit](#ai---artificial-intelligence-toolkit)
       - [llm - Large Language Model Client](#llm---large-language-model-client)
+        - [agentx - AI Agent Framework](#agentx---ai-agent-framework)
+        - [memoryx - Agent Memory Management](#memoryx---agent-memory-management)
+        - [toolx - Agent Tool Framework](#toolx---agent-tool-framework)
       - [embedding - Text Embedding Interface](#embedding---text-embedding-interface)
       - [ocr - Optical Character Recognition](#ocr---optical-character-recognition)
       - [speech - Text-to-Speech and Speech-to-Text](#speech---text-to-speech-and-speech-to-text)
@@ -43,6 +46,7 @@
     - [Struct Validation (validatex)](#struct-validation-validatex)
     - [API Documentation (docx)](#api-documentation-docx)
     - [LLM Interaction](#llm-interaction)
+    - [Agent Interaction](#agent-interaction)
     - [Text Embedding](#text-embedding)
     - [OCR Processing](#ocr-processing)
     - [Speech Processing](#speech-processing)
@@ -138,6 +142,37 @@ Interact with large language models with a clean, flexible interface:
 - **Message Management**: Structured conversation history handling
 - **Tool Integration**: Support for function calling and tool usage
 - **Type-safe Responses**: Strongly-typed message handling
+
+##### agentx - AI Agent Framework
+
+Build powerful AI agents with reasoning and tool-using capabilities:
+
+- **Tool Integration**: Seamless integration with custom tools and functions
+- **Memory Management**: Stateful conversations with system prompt management
+- **Multi-turn Reasoning**: Handle complex, multi-step reasoning flows
+- **Tool Execution Tracing**: Detailed execution traces for debugging
+- **Interactive Mode**: Support for both batch and interactive conversations
+- **Streaming Support**: Stream responses in real-time, even while using tools
+- **Evaluation Framework**: Measure performance and analyze agent behaviors
+
+##### memoryx - Agent Memory Management
+
+Flexible conversation memory for stateful agent interactions:
+
+- **System Prompt Management**: Maintain and update system instructions
+- **Context Window Management**: Automatically manage token limits
+- **Conversation History**: Track the full history of interactions
+- **Configurable Size**: Customize memory capacity based on requirements
+
+##### toolx - Agent Tool Framework
+
+Create and integrate tools that agents can use to perform actions:
+
+- **Tool Interface**: Simple interface for defining agent tools
+- **Type Conversion**: Automatic handling of different return types
+- **Error Handling**: Structured error reporting from tool execution
+- **Function Calling**: Compatible with LLM function calling capabilities
+- **JSON Schema**: Automatic conversion of tools to JSON schema for LLMs
 
 #### embedding - Text Embedding Interface
 
@@ -726,6 +761,172 @@ func main() {
     }
     fmt.Println()
     stream.Close()
+}
+```
+
+### Agent Interaction
+
+```go
+package main
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/Abraxas-365/craftable/ai/aiproviders"
+	"github.com/Abraxas-365/craftable/ai/llm"
+	"github.com/Abraxas-365/craftable/ai/llm/agentx"
+	"github.com/Abraxas-365/craftable/ai/llm/memoryx"
+	"github.com/Abraxas-365/craftable/ai/llm/toolx"
+)
+
+func main() {
+	// Get API key from environment
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	if apiKey == "" {
+		fmt.Println("Please set OPENAI_API_KEY environment variable")
+		os.Exit(1)
+	}
+
+	// Create the LLM client using your existing provider
+	provider := aiproviders.NewOpenAIProvider(apiKey)
+	client := llm.NewClient(provider)
+
+	// Create a simple tool
+	weatherTool := NewWeatherTool()
+	tools := toolx.FromToolx(weatherTool)
+
+	// Create memory with system prompt
+	mem := memoryx.NewMemory("You are a helpful assistant that can check weather conditions.")
+
+	// Create the agent
+	myAgent := agentx.New(
+		client,
+		mem,
+		agentx.WithTools(tools),
+		agentx.WithOptions(
+			// llm.WithModel("gpt-4o"),
+			llm.WithMaxTokens(500),
+			llm.WithTemperature(0.7),
+		),
+	)
+
+	fmt.Println("=== Interactive Weather Assistant ===")
+	fmt.Println("Type your questions about weather (press Ctrl+C to exit)")
+	fmt.Println("Example: What's the weather like in New York?")
+
+	// Create a scanner to read user input
+	scanner := bufio.NewScanner(os.Stdin)
+
+	// Continuous input loop
+	for {
+		fmt.Print("\n> ")
+		if !scanner.Scan() {
+			break // Exit on EOF
+		}
+
+		userQuery := scanner.Text()
+		if strings.TrimSpace(userQuery) == "" {
+			continue // Skip empty queries
+		}
+
+		// Process the query
+		response, err := myAgent.EvaluateWithTools(context.Background(), userQuery)
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			continue
+		}
+
+		// Print just the final response
+		fmt.Println("\nAssistant:", response.FinalResponse)
+
+		// Optional: uncomment this block if you want to see the detailed execution trace
+		/*
+			eval, err := myAgent.EvaluateWithTools(context.Background(), userQuery)
+			if err != nil {
+				fmt.Printf("Error: %v\n", err)
+				continue
+			}
+
+			fmt.Println("\n--- Execution Steps ---")
+			for i, step := range eval.Steps {
+				fmt.Printf("\nStep %d (%s):\n", i+1, step.StepType)
+
+				if step.StepType == "initial" || step.StepType == "response" {
+					fmt.Printf("LLM Output: %s\n", step.OutputMessage.Content)
+
+					if len(step.OutputMessage.ToolCalls) > 0 {
+						fmt.Println("Tool Calls:")
+						for _, tc := range step.OutputMessage.ToolCalls {
+							fmt.Printf("  - %s: %s\n", tc.Function.Name, tc.Function.Arguments)
+						}
+					}
+
+					fmt.Printf("Tokens Used: %d\n", step.TokenUsage.TotalTokens)
+				}
+
+				if step.StepType == "tool_execution" {
+					fmt.Println("Tool Responses:")
+					for _, tr := range step.ToolResponses {
+						fmt.Printf("  - %s\n", tr.Content)
+					}
+				}
+			}
+		*/
+	}
+
+	fmt.Println("\nExiting. Goodbye!")
+}
+
+// WeatherTool provides weather information
+type WeatherTool struct{}
+
+type WeatherRequest struct {
+	Location string `json:"location"`
+}
+
+func NewWeatherTool() *WeatherTool {
+	return &WeatherTool{}
+}
+
+func (w *WeatherTool) Name() string {
+	return "get_weather"
+}
+
+func (w *WeatherTool) GetTool() llm.Tool {
+	return llm.Tool{
+		Type: "function",
+		Function: llm.Function{
+			Name:        w.Name(),
+			Description: "Get the current weather in a location",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"location": map[string]interface{}{
+						"type":        "string",
+						"description": "The city name, e.g. New York",
+					},
+				},
+				"required": []string{"location"},
+			},
+		},
+	}
+}
+
+func (w *WeatherTool) Call(ctx context.Context, inputs string) (any, error) {
+	// Parse input
+	var request WeatherRequest
+	if err := json.Unmarshal([]byte(inputs), &request); err != nil {
+		return nil, fmt.Errorf("failed to parse weather request: %w", err)
+	}
+
+	// Simple mock implementation - in a real app, you'd call a weather API
+	weatherData := fmt.Sprintf("Currently 22Â°C and partly cloudy in %s.", request.Location)
+	return weatherData, nil
 }
 ```
 

@@ -2,14 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"io"
 	"os"
-	"strings"
 
 	"github.com/Abraxas-365/craftable/ai/aiproviders"
 	"github.com/Abraxas-365/craftable/ai/llm"
-	"github.com/openai/openai-go"
+	"github.com/Abraxas-365/craftable/ai/llm/agentx"
+	"github.com/Abraxas-365/craftable/ai/llm/memoryx"
+	"github.com/Abraxas-365/craftable/ai/llm/toolx"
 )
 
 func main() {
@@ -20,180 +21,115 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Create the OpenAI provider
+	// Create the LLM client using your existing provider
 	provider := aiproviders.NewOpenAIProvider(apiKey)
-
-	// Create a client with the provider
 	client := llm.NewClient(provider)
 
-	// Run examples
-	fmt.Println("=== Basic Chat Example ===")
-	basicChatExample(client)
+	// Create a simple tool
+	weatherTool := NewWeatherTool()
+	tools := toolx.FromToolx(weatherTool)
 
-	fmt.Println("\n=== Streaming Chat Example ===")
-	streamingChatExample(client)
+	// Create memory with system prompt
+	mem := memoryx.NewMemory("You are a helpful assistant that can check weather conditions.")
 
-	fmt.Println("\n=== Tool Call Example ===")
-	toolCallExample(client)
-}
-
-func basicChatExample(client *llm.Client) {
-	// Create a conversation
-	messages := []llm.Message{
-		llm.NewSystemMessage("You are a helpful assistant that provides concise answers."),
-		llm.NewUserMessage("What's the capital of France?"),
-	}
-
-	// Get a response
-	resp, err := client.Chat(context.Background(), messages,
-		llm.WithModel(openai.ChatModelGPT4o),
-		llm.WithTemperature(0.7),
+	// Create the agent
+	myAgent := agentx.New(
+		client,
+		mem,
+		agentx.WithTools(tools),
+		agentx.WithOptions(
+			llm.WithModel("gpt-4o"),
+			llm.WithMaxTokens(500),
+			llm.WithTemperature(0.7),
+		),
 	)
 
+	// Use the agent.EvaluateWithTools function for a detailed execution trace
+	userQuery := "What's the weather like in New York?"
+	fmt.Println("Running agent with query:", userQuery)
+
+	eval, err := myAgent.EvaluateWithTools(context.Background(), userQuery)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
 
-	// Print the response
-	fmt.Println("Assistant:", resp.Message.Content)
-	fmt.Printf("Usage: %d tokens total (%d prompt, %d completion)\n",
-		resp.Usage.TotalTokens,
-		resp.Usage.PromptTokens,
-		resp.Usage.CompletionTokens)
+	// Print the detailed execution trace
+	fmt.Println("\n=== Agent Evaluation Results ===")
+	fmt.Println("User Query:", eval.UserInput)
 
-	// Continue the conversation
-	messages = append(messages, resp.Message) // Add assistant's response
-	messages = append(messages, llm.NewUserMessage("What's its population?"))
+	fmt.Println("\n--- Execution Steps ---")
+	for i, step := range eval.Steps {
+		fmt.Printf("\nStep %d (%s):\n", i+1, step.StepType)
 
-	// Get second response
-	resp2, err := client.Chat(context.Background(), messages,
-		llm.WithModel(openai.ChatModelGPT4o),
-		llm.WithTemperature(0.7),
-	)
+		if step.StepType == "initial" || step.StepType == "response" {
+			fmt.Printf("LLM Output: %s\n", step.OutputMessage.Content)
 
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
-	}
+			if len(step.OutputMessage.ToolCalls) > 0 {
+				fmt.Println("Tool Calls:")
+				for _, tc := range step.OutputMessage.ToolCalls {
+					fmt.Printf("  - %s: %s\n", tc.Function.Name, tc.Function.Arguments)
+				}
+			}
 
-	// Print second response
-	fmt.Println("Assistant:", resp2.Message.Content)
-}
-
-func streamingChatExample(client *llm.Client) {
-	// Create a conversation
-	messages := []llm.Message{
-		llm.NewSystemMessage("You are a helpful assistant that generates creative content."),
-		llm.NewUserMessage("Write a short haiku about programming in Go"),
-	}
-
-	// Get a streaming response
-	stream, err := client.ChatStream(context.Background(), messages,
-		llm.WithModel(openai.ChatModelGPT4o),
-		llm.WithTemperature(0.8),
-	)
-
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
-	}
-
-	fmt.Print("Assistant: ")
-
-	// Collect the full response for later use
-	var fullResponse strings.Builder
-
-	// Print the streaming response
-	for {
-		msg, err := stream.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			fmt.Printf("\nStream error: %v\n", err)
-			break
+			fmt.Printf("Tokens Used: %d\n", step.TokenUsage.TotalTokens)
 		}
 
-		fmt.Print(msg.Content)
-		fullResponse.WriteString(msg.Content)
+		if step.StepType == "tool_execution" {
+			fmt.Println("Tool Responses:")
+			for _, tr := range step.ToolResponses {
+				fmt.Printf("  - %s\n", tr.Content)
+			}
+		}
 	}
 
-	fmt.Println()
-	stream.Close()
+	fmt.Println("\n--- Final Result ---")
+	fmt.Println(eval.FinalResponse)
 }
 
-func toolCallExample(client *llm.Client) {
-	// Define weather tool
-	weatherTool := llm.Tool{
+// WeatherTool provides weather information
+type WeatherTool struct{}
+
+type WeatherRequest struct {
+	Location string `json:"location"`
+}
+
+func NewWeatherTool() *WeatherTool {
+	return &WeatherTool{}
+}
+
+func (w *WeatherTool) Name() string {
+	return "get_weather"
+}
+
+func (w *WeatherTool) GetTool() llm.Tool {
+	return llm.Tool{
 		Type: "function",
 		Function: llm.Function{
-			Name:        "get_weather",
+			Name:        w.Name(),
 			Description: "Get the current weather in a location",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"location": map[string]interface{}{
 						"type":        "string",
-						"description": "The city and state, e.g. San Francisco, CA",
-					},
-					"unit": map[string]interface{}{
-						"type":        "string",
-						"enum":        []string{"celsius", "fahrenheit"},
-						"description": "The temperature unit to use",
+						"description": "The city name, e.g. New York",
 					},
 				},
 				"required": []string{"location"},
 			},
 		},
 	}
-	// Create a conversation with a query that should trigger the tool
-	messages := []llm.Message{
-		llm.NewUserMessage("What's the weather like in Paris today?"),
+}
+
+func (w *WeatherTool) Call(ctx context.Context, inputs string) (any, error) {
+	// Parse input
+	var request WeatherRequest
+	if err := json.Unmarshal([]byte(inputs), &request); err != nil {
+		return nil, fmt.Errorf("failed to parse weather request: %w", err)
 	}
 
-	// Make the request with the tool
-	resp, err := client.Chat(context.Background(), messages,
-		llm.WithModel(openai.ChatModelGPT4o),
-		llm.WithTools([]llm.Tool{weatherTool}),
-	)
-
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
-	}
-
-	// Check if we got a tool call
-	if len(resp.Message.ToolCalls) > 0 {
-		fmt.Println("Assistant wants to use a tool:")
-
-		for _, toolCall := range resp.Message.ToolCalls {
-			fmt.Printf("Tool: %s\n", toolCall.Function.Name)
-			fmt.Printf("Arguments: %s\n", toolCall.Function.Arguments)
-
-			// Simulate getting weather data
-			weatherData := "It's 24°C and sunny in Paris"
-
-			// Add the assistant's response and our tool response to the conversation
-			messages = append(messages, resp.Message)
-			messages = append(messages, llm.NewToolMessage(toolCall.ID, weatherData))
-
-			// Get the final response
-			finalResp, err := client.Chat(context.Background(), messages,
-				llm.WithModel(openai.ChatModelGPT4o),
-			)
-
-			if err != nil {
-				fmt.Printf("Error: %v\n", err)
-				return
-			}
-
-			// Print the final response
-			fmt.Println("\nAssistant's final response:")
-			fmt.Println(finalResp.Message.Content)
-		}
-	} else {
-		// Print the response if no tool calls
-		fmt.Println("Assistant:", resp.Message.Content)
-	}
+	// Simple mock implementation - in a real app, you'd call a weather API
+	weatherData := fmt.Sprintf("Currently 22°C and partly cloudy in %s.", request.Location)
+	return weatherData, nil
 }

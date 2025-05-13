@@ -42,9 +42,15 @@ func NewOpenAIProvider(apiKey string, opts ...option.RequestOption) *OpenAIProvi
 	}
 }
 
+func defaultChatOptions() *llm.ChatOptions {
+	options := llm.DefaultOptions()
+	options.Model = "gpt-4o"
+	return options
+}
+
 // Chat implements the LLM interface
 func (p *OpenAIProvider) Chat(ctx context.Context, messages []llm.Message, opts ...llm.Option) (llm.Response, error) {
-	options := llm.DefaultOptions()
+	options := defaultChatOptions()
 	for _, opt := range opts {
 		opt(options)
 	}
@@ -121,7 +127,7 @@ func (p *OpenAIProvider) Chat(ctx context.Context, messages []llm.Message, opts 
 
 // ChatStream implements the LLM interface for streaming responses
 func (p *OpenAIProvider) ChatStream(ctx context.Context, messages []llm.Message, opts ...llm.Option) (llm.Stream, error) {
-	options := llm.DefaultOptions()
+	options := defaultChatOptions()
 	for _, opt := range opts {
 		opt(options)
 	}

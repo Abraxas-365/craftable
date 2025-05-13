@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/Abraxas-365/craftable/ai/aiproviders"
 	"github.com/Abraxas-365/craftable/ai/llm"
@@ -38,53 +40,77 @@ func main() {
 		mem,
 		agentx.WithTools(tools),
 		agentx.WithOptions(
-			llm.WithModel("gpt-4o"),
+			// llm.WithModel("gpt-4o"),
 			llm.WithMaxTokens(500),
 			llm.WithTemperature(0.7),
 		),
 	)
 
-	// Use the agent.EvaluateWithTools function for a detailed execution trace
-	userQuery := "What's the weather like in New York?"
-	fmt.Println("Running agent with query:", userQuery)
+	fmt.Println("=== Interactive Weather Assistant ===")
+	fmt.Println("Type your questions about weather (press Ctrl+C to exit)")
+	fmt.Println("Example: What's the weather like in New York?")
 
-	eval, err := myAgent.EvaluateWithTools(context.Background(), userQuery)
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
-	}
+	// Create a scanner to read user input
+	scanner := bufio.NewScanner(os.Stdin)
 
-	// Print the detailed execution trace
-	fmt.Println("\n=== Agent Evaluation Results ===")
-	fmt.Println("User Query:", eval.UserInput)
+	// Continuous input loop
+	for {
+		fmt.Print("\n> ")
+		if !scanner.Scan() {
+			break // Exit on EOF
+		}
 
-	fmt.Println("\n--- Execution Steps ---")
-	for i, step := range eval.Steps {
-		fmt.Printf("\nStep %d (%s):\n", i+1, step.StepType)
+		userQuery := scanner.Text()
+		if strings.TrimSpace(userQuery) == "" {
+			continue // Skip empty queries
+		}
 
-		if step.StepType == "initial" || step.StepType == "response" {
-			fmt.Printf("LLM Output: %s\n", step.OutputMessage.Content)
+		// Process the query
+		response, err := myAgent.EvaluateWithTools(context.Background(), userQuery)
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			continue
+		}
 
-			if len(step.OutputMessage.ToolCalls) > 0 {
-				fmt.Println("Tool Calls:")
-				for _, tc := range step.OutputMessage.ToolCalls {
-					fmt.Printf("  - %s: %s\n", tc.Function.Name, tc.Function.Arguments)
+		// Print just the final response
+		fmt.Println("\nAssistant:", response.FinalResponse)
+
+		// Optional: uncomment this block if you want to see the detailed execution trace
+		/*
+			eval, err := myAgent.EvaluateWithTools(context.Background(), userQuery)
+			if err != nil {
+				fmt.Printf("Error: %v\n", err)
+				continue
+			}
+
+			fmt.Println("\n--- Execution Steps ---")
+			for i, step := range eval.Steps {
+				fmt.Printf("\nStep %d (%s):\n", i+1, step.StepType)
+
+				if step.StepType == "initial" || step.StepType == "response" {
+					fmt.Printf("LLM Output: %s\n", step.OutputMessage.Content)
+
+					if len(step.OutputMessage.ToolCalls) > 0 {
+						fmt.Println("Tool Calls:")
+						for _, tc := range step.OutputMessage.ToolCalls {
+							fmt.Printf("  - %s: %s\n", tc.Function.Name, tc.Function.Arguments)
+						}
+					}
+
+					fmt.Printf("Tokens Used: %d\n", step.TokenUsage.TotalTokens)
+				}
+
+				if step.StepType == "tool_execution" {
+					fmt.Println("Tool Responses:")
+					for _, tr := range step.ToolResponses {
+						fmt.Printf("  - %s\n", tr.Content)
+					}
 				}
 			}
-
-			fmt.Printf("Tokens Used: %d\n", step.TokenUsage.TotalTokens)
-		}
-
-		if step.StepType == "tool_execution" {
-			fmt.Println("Tool Responses:")
-			for _, tr := range step.ToolResponses {
-				fmt.Printf("  - %s\n", tr.Content)
-			}
-		}
+		*/
 	}
 
-	fmt.Println("\n--- Final Result ---")
-	fmt.Println(eval.FinalResponse)
+	fmt.Println("\nExiting. Goodbye!")
 }
 
 // WeatherTool provides weather information

@@ -482,10 +482,3 @@ func convertMapToBson(m map[string]any) bson.M {
 	}
 	return bsonDoc
 }
-
-// extractIDValue extracts the ID field value from a struct using reflection
-func extractIDValue(item interface{}, idField string) interface{} {
-	// Implementation would use reflection to extract the ID field
-	// For simplicity, this is a placeholder
-	return nil
-}

@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // TypedSQL provides SQL operations for a specific type
@@ -669,6 +671,8 @@ func PaginateSimple[T any](
 }
 
 // Helper functions
+
+// FIXED scanIntoStruct function
 func scanIntoStruct(scanner interface{}, dest interface{}) error {
 	// Get the value and type of the destination
 	destValue := reflect.ValueOf(dest)
@@ -679,95 +683,372 @@ func scanIntoStruct(scanner interface{}, dest interface{}) error {
 	destElem := destValue.Elem()
 	destType := destElem.Type()
 
-	// Handle scanning based on scanner type
-	switch scanner := scanner.(type) {
-	case *sql.Row:
-		return scanRowIntoStruct(scanner, destElem, destType)
-	case *sql.Rows:
-		return scanRowsIntoStruct(scanner, destElem, destType)
-	default:
-		return fmt.Errorf("invalid scanner type: %T", scanner)
-	}
-}
-
-func scanRowIntoStruct(row *sql.Row, destElem reflect.Value, destType reflect.Type) error {
-	// Prepare scan targets for each field
+	// Get all field information from the struct
 	numFields := destType.NumField()
-	scanTargets := make([]interface{}, numFields)
+	fieldNameMap := make(map[string]int)
 
 	for i := 0; i < numFields; i++ {
-		field := destElem.Field(i)
-		fieldType := destType.Field(i)
-
-		// Skip unexported fields
-		if !field.CanSet() {
-			continue
-		}
-
-		// Get the db tag if available, otherwise use field name
-		fieldName := fieldType.Tag.Get("db")
-		if fieldName == "" {
-			fieldName = strings.ToLower(fieldType.Name)
-		}
-
-		// Skip fields marked with "-"
-		if fieldName == "-" {
-			continue
-		}
-
-		// Create appropriate scan target based on field type
-		scanTargets[i] = field.Addr().Interface()
-	}
-
-	return row.Scan(scanTargets...)
-}
-
-func scanRowsIntoStruct(rows *sql.Rows, destElem reflect.Value, destType reflect.Type) error {
-	// Get column names from the result
-	columns, err := rows.Columns()
-	if err != nil {
-		return err
-	}
-
-	// Create a map of db field name to struct field index
-	fieldMap := make(map[string]int)
-	for i := 0; i < destType.NumField(); i++ {
 		field := destType.Field(i)
 
-		// Get the db tag if available, otherwise use lowercased field name
-		fieldName := field.Tag.Get("db")
-		if fieldName == "" {
-			fieldName = strings.ToLower(field.Name)
+		// Check for db tag first
+		dbFieldName := field.Tag.Get("db")
+		if dbFieldName == "-" {
+			continue // Skip this field
 		}
 
-		// Skip fields marked with "-"
-		if fieldName == "-" {
-			continue
+		if dbFieldName == "" {
+			// If no db tag, use field name (lowercase for matching)
+			dbFieldName = strings.ToLower(field.Name)
 		}
 
-		fieldMap[fieldName] = i
+		fieldNameMap[dbFieldName] = i
 	}
 
-	// Create scan targets for each column
-	scanTargets := make([]interface{}, len(columns))
-	for i, colName := range columns {
-		fieldIndex, ok := fieldMap[colName]
-		if !ok {
-			// Handle column with no matching field
-			var ignored interface{}
-			scanTargets[i] = &ignored
-			continue
+	// Process based on scanner type
+	switch s := scanner.(type) {
+	case *sql.Row:
+		// Create a slice of interface{} to scan into
+		scanTargets := make([]interface{}, 0, numFields)
+		fieldPtrs := make([]interface{}, 0, numFields)
+
+		// Create pointers for all fields
+		for i := 0; i < numFields; i++ {
+			if !destElem.Field(i).CanSet() {
+				continue // Skip unexported fields
+			}
+
+			// Create a new value of the field's type
+			fieldPtr := reflect.New(destType.Field(i).Type).Interface()
+			fieldPtrs = append(fieldPtrs, fieldPtr)
+			scanTargets = append(scanTargets, fieldPtr)
 		}
 
-		field := destElem.Field(fieldIndex)
-		if field.CanAddr() {
-			scanTargets[i] = field.Addr().Interface()
+		// Scan the row into our targets
+		if err := s.Scan(scanTargets...); err != nil {
+			return err
+		}
+
+		// Copy the scanned values to the destination struct
+		fieldIndex := 0
+		for i := 0; i < numFields; i++ {
+			field := destElem.Field(i)
+			if !field.CanSet() {
+				continue
+			}
+
+			// Get the value that was scanned
+			scannedValue := reflect.ValueOf(fieldPtrs[fieldIndex]).Elem()
+
+			// Set the field in our destination struct
+			field.Set(scannedValue)
+
+			fieldIndex++
+		}
+
+		return nil
+
+	case *sql.Rows:
+		// Get the column names
+		cols, err := s.Columns()
+		if err != nil {
+			return err
+		}
+
+		// Create a slice of interface{} to scan into
+		values := make([]interface{}, len(cols))
+		pointers := make([]interface{}, len(cols))
+
+		// For each column, create a pointer to a destination
+		for i := range values {
+			pointers[i] = &values[i]
+		}
+
+		// Scan the row into our targets
+		if err := s.Scan(pointers...); err != nil {
+			return err
+		}
+
+		// For each column, assign to the appropriate struct field
+		for i, colName := range cols {
+			fieldIdx, ok := fieldNameMap[colName]
+			if !ok {
+				// Column doesn't match any field, skip it
+				continue
+			}
+
+			field := destElem.Field(fieldIdx)
+			if !field.CanSet() {
+				// Field can't be set (unexported), skip it
+				continue
+			}
+
+			// Get the value from the pointer
+			val := values[i]
+
+			// Skip nil values
+			if val == nil {
+				continue
+			}
+
+			// Set the field based on the value's type
+			if err := assignValueToField(field, val); err != nil {
+				return fmt.Errorf("field %s: %w", destType.Field(fieldIdx).Name, err)
+			}
+		}
+
+		return nil
+
+	default:
+		return fmt.Errorf("unsupported scanner type: %T", scanner)
+	}
+}
+
+// Helper function to assign a value to a field
+func assignValueToField(field reflect.Value, value interface{}) error {
+	// Handle nil values
+	if value == nil {
+		return nil
+	}
+
+	fieldType := field.Type()
+	valueType := reflect.TypeOf(value)
+
+	// If types are directly assignable
+	if valueType.AssignableTo(fieldType) {
+		field.Set(reflect.ValueOf(value))
+		return nil
+	}
+
+	// Handle special cases based on field kind
+	switch field.Kind() {
+	case reflect.String:
+		// Convert value to string
+		field.SetString(fmt.Sprintf("%v", value))
+
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		// Try to convert value to int64
+		var intVal int64
+
+		switch v := value.(type) {
+		case int:
+			intVal = int64(v)
+		case int64:
+			intVal = v
+		case int32:
+			intVal = int64(v)
+		case int16:
+			intVal = int64(v)
+		case int8:
+			intVal = int64(v)
+		case uint:
+			intVal = int64(v)
+		case uint64:
+			intVal = int64(v)
+		case uint32:
+			intVal = int64(v)
+		case uint16:
+			intVal = int64(v)
+		case uint8:
+			intVal = int64(v)
+		case float64:
+			intVal = int64(v)
+		case float32:
+			intVal = int64(v)
+		case string:
+			var err error
+			intVal, err = strconv.ParseInt(v, 10, 64)
+			if err != nil {
+				return fmt.Errorf("cannot convert string '%s' to int: %w", v, err)
+			}
+		default:
+			return fmt.Errorf("cannot convert %T to int64", value)
+		}
+
+		field.SetInt(intVal)
+
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		// Try to convert value to uint64
+		var uintVal uint64
+
+		switch v := value.(type) {
+		case uint:
+			uintVal = uint64(v)
+		case uint64:
+			uintVal = v
+		case uint32:
+			uintVal = uint64(v)
+		case uint16:
+			uintVal = uint64(v)
+		case uint8:
+			uintVal = uint64(v)
+		case int:
+			if v < 0 {
+				return fmt.Errorf("cannot convert negative int to uint")
+			}
+			uintVal = uint64(v)
+		case int64:
+			if v < 0 {
+				return fmt.Errorf("cannot convert negative int64 to uint")
+			}
+			uintVal = uint64(v)
+		case int32:
+			if v < 0 {
+				return fmt.Errorf("cannot convert negative int32 to uint")
+			}
+			uintVal = uint64(v)
+		case int16:
+			if v < 0 {
+				return fmt.Errorf("cannot convert negative int16 to uint")
+			}
+			uintVal = uint64(v)
+		case int8:
+			if v < 0 {
+				return fmt.Errorf("cannot convert negative int8 to uint")
+			}
+			uintVal = uint64(v)
+		case string:
+			var err error
+			uintVal, err = strconv.ParseUint(v, 10, 64)
+			if err != nil {
+				return fmt.Errorf("cannot convert string '%s' to uint: %w", v, err)
+			}
+		default:
+			return fmt.Errorf("cannot convert %T to uint64", value)
+		}
+
+		field.SetUint(uintVal)
+
+	case reflect.Float32, reflect.Float64:
+		// Try to convert value to float64
+		var floatVal float64
+
+		switch v := value.(type) {
+		case float64:
+			floatVal = v
+		case float32:
+			floatVal = float64(v)
+		case int:
+			floatVal = float64(v)
+		case int64:
+			floatVal = float64(v)
+		case int32:
+			floatVal = float64(v)
+		case int16:
+			floatVal = float64(v)
+		case int8:
+			floatVal = float64(v)
+		case uint:
+			floatVal = float64(v)
+		case uint64:
+			floatVal = float64(v)
+		case uint32:
+			floatVal = float64(v)
+		case uint16:
+			floatVal = float64(v)
+		case uint8:
+			floatVal = float64(v)
+		case string:
+			var err error
+			floatVal, err = strconv.ParseFloat(v, 64)
+			if err != nil {
+				return fmt.Errorf("cannot convert string '%s' to float: %w", v, err)
+			}
+		default:
+			return fmt.Errorf("cannot convert %T to float64", value)
+		}
+
+		field.SetFloat(floatVal)
+
+	case reflect.Bool:
+		// Try to convert value to bool
+		var boolVal bool
+
+		switch v := value.(type) {
+		case bool:
+			boolVal = v
+		case int:
+			boolVal = v != 0
+		case int64:
+			boolVal = v != 0
+		case int32:
+			boolVal = v != 0
+		case string:
+			var err error
+			boolVal, err = strconv.ParseBool(v)
+			if err != nil {
+				return fmt.Errorf("cannot convert string '%s' to bool: %w", v, err)
+			}
+		default:
+			return fmt.Errorf("cannot convert %T to bool", value)
+		}
+
+		field.SetBool(boolVal)
+
+	case reflect.Struct:
+		// Special handling for time.Time
+		if field.Type() == reflect.TypeOf(time.Time{}) {
+			switch v := value.(type) {
+			case time.Time:
+				field.Set(reflect.ValueOf(v))
+			case string:
+				// Try to parse time string in different formats
+				layouts := []string{
+					time.RFC3339,
+					"2006-01-02 15:04:05",
+					"2006-01-02",
+					"15:04:05",
+				}
+
+				var parsedTime time.Time
+				var err error
+
+				for _, layout := range layouts {
+					parsedTime, err = time.Parse(layout, v)
+					if err == nil {
+						field.Set(reflect.ValueOf(parsedTime))
+						return nil
+					}
+				}
+
+				return fmt.Errorf("cannot parse time from string '%s'", v)
+			default:
+				return fmt.Errorf("cannot convert %T to time.Time", value)
+			}
 		} else {
-			return fmt.Errorf("cannot address field for column %s", colName)
+			return fmt.Errorf("cannot handle struct type %s", field.Type().Name())
 		}
+
+	case reflect.Ptr:
+		// Create a new value to hold the converted value
+		elemType := field.Type().Elem()
+		newValue := reflect.New(elemType)
+
+		// Set the pointer field to the new value
+		field.Set(newValue)
+
+		// Handle the element value
+		return assignValueToField(newValue.Elem(), value)
+
+	case reflect.Slice:
+		// Handle []byte specially
+		if field.Type() == reflect.TypeOf([]byte{}) {
+			switch v := value.(type) {
+			case []byte:
+				field.SetBytes(v)
+			case string:
+				field.SetBytes([]byte(v))
+			default:
+				return fmt.Errorf("cannot convert %T to []byte", value)
+			}
+		} else {
+			return fmt.Errorf("cannot handle slice type %s", field.Type().String())
+		}
+
+	default:
+		return fmt.Errorf("unsupported field type: %s", field.Kind())
 	}
 
-	return rows.Scan(scanTargets...)
+	return nil
 }
 
 // extractFieldsAndValues extracts field names and values from a struct

@@ -2,6 +2,8 @@ package storex
 
 import (
 	"context"
+	"reflect"
+	"strings"
 	"time"
 )
 
@@ -234,4 +236,68 @@ type ChangeEvent[T any] struct {
 type ChangeStream[T any] interface {
 	// Watch creates a stream of change events
 	Watch(ctx context.Context, filter map[string]any) (<-chan ChangeEvent[T], error)
+}
+
+func extractIDValue(item interface{}, idField string) interface{} {
+	// Get the value of the item
+	val := reflect.ValueOf(item)
+
+	// If item is a pointer, get the value it points to
+	if val.Kind() == reflect.Ptr {
+		if val.IsNil() {
+			return nil
+		}
+		val = val.Elem()
+	}
+
+	// Make sure we're dealing with a struct
+	if val.Kind() != reflect.Struct {
+		return nil
+	}
+
+	// Get the type for field lookup
+	typ := val.Type()
+
+	// First, try to find the field directly by name
+	field := val.FieldByName(idField)
+	if field.IsValid() && field.CanInterface() {
+		return field.Interface()
+	}
+
+	// If not found, try to match by DB tag
+	for i := 0; i < typ.NumField(); i++ {
+		fieldType := typ.Field(i)
+
+		// Check if the field has the db tag matching the idField
+		dbTag := fieldType.Tag.Get("db")
+		if dbTag == idField {
+			// Found a match with the tag
+			field = val.Field(i)
+			if field.IsValid() && field.CanInterface() {
+				return field.Interface()
+			}
+		}
+
+		// Also check if the lowercase field name matches (convention)
+		if strings.EqualFold(fieldType.Name, idField) {
+			field = val.Field(i)
+			if field.IsValid() && field.CanInterface() {
+				return field.Interface()
+			}
+		}
+	}
+
+	// If we couldn't find a match, look for fields with common ID names
+	if strings.EqualFold(idField, "id") {
+		commonIDFields := []string{"ID", "Id", "Uuid", "UUID", "Guid", "GUID"}
+		for _, name := range commonIDFields {
+			field := val.FieldByName(name)
+			if field.IsValid() && field.CanInterface() {
+				return field.Interface()
+			}
+		}
+	}
+
+	// Couldn't find a matching field
+	return nil
 }

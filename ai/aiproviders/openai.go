@@ -511,7 +511,7 @@ func (p *OpenAIProvider) EmbedDocuments(ctx context.Context, documents []string,
 		params.Model = options.Model
 	} else {
 		// Default model
-		params.Model = "text-embedding-ada-002"
+		params.Model = "text-embedding-3-small"
 	}
 
 	// Set dimensions if specified

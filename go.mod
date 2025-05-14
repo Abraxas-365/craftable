@@ -3,6 +3,7 @@ module github.com/Abraxas-365/craftable
 go 1.24.2
 
 require (
+	github.com/Abraxas-365/kbservice v0.0.19
 	github.com/aws/aws-sdk-go-v2 v1.36.3
 	github.com/aws/aws-sdk-go-v2/config v1.29.14
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.79.3
@@ -11,6 +12,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/lib/pq v1.10.9
 	github.com/openai/openai-go v0.1.0-beta.10
+	github.com/pkoukk/tiktoken-go v0.1.7
 	github.com/spf13/cobra v1.9.1
 	go.mongodb.org/mongo-driver v1.17.3
 )
@@ -32,6 +34,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.30.1 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.33.19 // indirect
 	github.com/aws/smithy-go v1.22.2 // indirect
+	github.com/dlclark/regexp2 v1.10.0 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect

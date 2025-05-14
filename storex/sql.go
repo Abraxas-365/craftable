@@ -669,43 +669,105 @@ func PaginateSimple[T any](
 }
 
 // Helper functions
-
-// scanIntoStruct scans a row into a struct using reflection
 func scanIntoStruct(scanner interface{}, dest interface{}) error {
-	// Implementation would use reflection to scan into struct
-	// For simplicity, this is a placeholder
-	var row *sql.Row
-	var rows *sql.Rows
-
-	switch r := scanner.(type) {
-	case *sql.Row:
-		row = r
-	case *sql.Rows:
-		rows = r
-	default:
-		return fmt.Errorf("invalid scanner type")
-	}
-
-	// Get the type information
+	// Get the value and type of the destination
 	destValue := reflect.ValueOf(dest)
 	if destValue.Kind() != reflect.Ptr || destValue.IsNil() {
 		return fmt.Errorf("destination must be a non-nil pointer")
 	}
 
 	destElem := destValue.Elem()
-	if destElem.Kind() != reflect.Struct {
-		return fmt.Errorf("destination must be a struct")
+	destType := destElem.Type()
+
+	// Handle scanning based on scanner type
+	switch scanner := scanner.(type) {
+	case *sql.Row:
+		return scanRowIntoStruct(scanner, destElem, destType)
+	case *sql.Rows:
+		return scanRowsIntoStruct(scanner, destElem, destType)
+	default:
+		return fmt.Errorf("invalid scanner type: %T", scanner)
+	}
+}
+
+func scanRowIntoStruct(row *sql.Row, destElem reflect.Value, destType reflect.Type) error {
+	// Prepare scan targets for each field
+	numFields := destType.NumField()
+	scanTargets := make([]interface{}, numFields)
+
+	for i := 0; i < numFields; i++ {
+		field := destElem.Field(i)
+		fieldType := destType.Field(i)
+
+		// Skip unexported fields
+		if !field.CanSet() {
+			continue
+		}
+
+		// Get the db tag if available, otherwise use field name
+		fieldName := fieldType.Tag.Get("db")
+		if fieldName == "" {
+			fieldName = strings.ToLower(fieldType.Name)
+		}
+
+		// Skip fields marked with "-"
+		if fieldName == "-" {
+			continue
+		}
+
+		// Create appropriate scan target based on field type
+		scanTargets[i] = field.Addr().Interface()
 	}
 
-	// Use reflection to scan into struct
-	// This is a placeholder implementation
-	if row != nil {
-		return fmt.Errorf("row scanning not implemented")
-	} else if rows != nil {
-		return fmt.Errorf("rows scanning not implemented")
+	return row.Scan(scanTargets...)
+}
+
+func scanRowsIntoStruct(rows *sql.Rows, destElem reflect.Value, destType reflect.Type) error {
+	// Get column names from the result
+	columns, err := rows.Columns()
+	if err != nil {
+		return err
 	}
 
-	return nil
+	// Create a map of db field name to struct field index
+	fieldMap := make(map[string]int)
+	for i := 0; i < destType.NumField(); i++ {
+		field := destType.Field(i)
+
+		// Get the db tag if available, otherwise use lowercased field name
+		fieldName := field.Tag.Get("db")
+		if fieldName == "" {
+			fieldName = strings.ToLower(field.Name)
+		}
+
+		// Skip fields marked with "-"
+		if fieldName == "-" {
+			continue
+		}
+
+		fieldMap[fieldName] = i
+	}
+
+	// Create scan targets for each column
+	scanTargets := make([]interface{}, len(columns))
+	for i, colName := range columns {
+		fieldIndex, ok := fieldMap[colName]
+		if !ok {
+			// Handle column with no matching field
+			var ignored interface{}
+			scanTargets[i] = &ignored
+			continue
+		}
+
+		field := destElem.Field(fieldIndex)
+		if field.CanAddr() {
+			scanTargets[i] = field.Addr().Interface()
+		} else {
+			return fmt.Errorf("cannot address field for column %s", colName)
+		}
+	}
+
+	return rows.Scan(scanTargets...)
 }
 
 // extractFieldsAndValues extracts field names and values from a struct

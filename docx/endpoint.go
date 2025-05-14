@@ -27,13 +27,26 @@ const (
 	CustomAuth Authentication = "custom"
 )
 
+// Enhanced Header struct with type and default value
 type Header struct {
-	Name        string `json:"name"`
-	Value       string `json:"value,omitempty"`
-	Description string `json:"description,omitempty"`
-	Required    bool   `json:"required"`
+	Name        string      `json:"name"`
+	Value       string      `json:"value,omitempty"`
+	Type        string      `json:"type,omitempty"`
+	Description string      `json:"description,omitempty"`
+	Required    bool        `json:"required"`
+	Default     interface{} `json:"default,omitempty"`
 }
 
+// New PathParam struct for path parameters
+type PathParam struct {
+	Name        string      `json:"name"`
+	Type        string      `json:"type"`
+	Description string      `json:"description,omitempty"`
+	Required    bool        `json:"required"`
+	Default     interface{} `json:"default,omitempty"`
+}
+
+// Enhanced Endpoint struct with PathParams field
 type Endpoint struct {
 	Path        string     `json:"path"`
 	Method      HTTPMethod `json:"method"`
@@ -53,8 +66,9 @@ type Endpoint struct {
 	Headers     []Header          `json:"headers,omitempty"`
 	Cookies     []Header          `json:"cookies,omitempty"`
 
-	// Query parameters
-	QueryParams []Header `json:"queryParams,omitempty"`
+	// Parameters
+	PathParams  []PathParam `json:"pathParams,omitempty"`
+	QueryParams []Header    `json:"queryParams,omitempty"`
 
 	// Example values for documentation
 	RequestExample  interface{} `json:"requestExample,omitempty"`
@@ -91,12 +105,24 @@ func (e *Endpoint) WithAuth(auth Authentication, details map[string]string) *End
 	return e
 }
 
-// Fixed WithHeader method to use slice instead of map
+// Original WithHeader method
 func (e *Endpoint) WithHeader(name, value string, required bool) *Endpoint {
 	e.Headers = append(e.Headers, Header{
 		Name:     name,
 		Value:    value,
 		Required: required,
+	})
+	return e
+}
+
+// Enhanced header method with more details
+func (e *Endpoint) WithHeaderEx(name, value, paramType, description string, required bool) *Endpoint {
+	e.Headers = append(e.Headers, Header{
+		Name:        name,
+		Value:       value,
+		Type:        paramType,
+		Description: description,
+		Required:    required,
 	})
 	return e
 }
@@ -110,6 +136,7 @@ func (e *Endpoint) WithCookie(name, description string, required bool) *Endpoint
 	return e
 }
 
+// Original query parameter method
 func (e *Endpoint) WithQueryParam(name, description string, required bool) *Endpoint {
 	e.QueryParams = append(e.QueryParams, Header{
 		Name:        name,
@@ -119,7 +146,47 @@ func (e *Endpoint) WithQueryParam(name, description string, required bool) *Endp
 	return e
 }
 
-// Update the WithRequestDTO and WithResponseDTO methods
+// Enhanced query parameter method with type and default value
+func (e *Endpoint) WithQueryParamEx(name, paramType, description string, required bool, defaultValue ...interface{}) *Endpoint {
+	param := Header{
+		Name:        name,
+		Type:        paramType,
+		Description: description,
+		Required:    required,
+	}
+
+	// Set default value if provided
+	if len(defaultValue) > 0 {
+		param.Default = defaultValue[0]
+	}
+
+	e.QueryParams = append(e.QueryParams, param)
+	return e
+}
+
+// New method for path parameters
+func (e *Endpoint) WithPathParam(name, paramType, description string, required bool) *Endpoint {
+	e.PathParams = append(e.PathParams, PathParam{
+		Name:        name,
+		Type:        paramType,
+		Description: description,
+		Required:    required,
+	})
+	return e
+}
+
+// Method for path parameters with default value
+func (e *Endpoint) WithPathParamDefault(name, paramType, description string, required bool, defaultValue interface{}) *Endpoint {
+	e.PathParams = append(e.PathParams, PathParam{
+		Name:        name,
+		Type:        paramType,
+		Description: description,
+		Required:    required,
+		Default:     defaultValue,
+	})
+	return e
+}
+
 func (e *Endpoint) WithRequestDTO(dto interface{}) *Endpoint {
 	e.RequestBody = dto
 	e.RequestSchema = extractSchema(reflect.TypeOf(dto))

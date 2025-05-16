@@ -21,7 +21,7 @@
   - [📦 Packages](#-packages)
     - [errx - Extended Error Handling](#errx---extended-error-handling)
     - [auth - Flexible Authentication](#auth---flexible-authentication)
-    - [storex - Database Store Abstraction](#storex---database-store-abstraction)
+    - [storex - Database Store Abstraction(Beta)](#storex---database-store-abstraction)
     - [dtox - DTO/Model Conversion](#dtox---dtomodel-conversion)
     - [validatex - Struct Validation](#validatex---struct-validation)
     - [docx - API Documentation Generator](#docx---api-documentation-generator)
@@ -326,64 +326,95 @@ func main() {
 package main
 
 import (
-    "context"
-    "fmt"
-    "time"
-    
-    "github.com/Abraxas-365/craftable/storex"
-    "go.mongodb.org/mongo-driver/mongo"
+	"context"
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/jmoiron/sqlx"
+	_ "github.com/lib/pq"
+	"github.com/yourusername/storex"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// Define your model
+// User represents a user in our application
 type User struct {
-    ID        string `bson:"_id,omitempty"`
-    Name      string `bson:"name"`
-    Email     string `bson:"email"`
-    CreatedAt int64  `bson:"created_at"`
+	ID        string    `db:"id" bson:"_id"`
+	Email     string    `db:"email" bson:"email"`
+	Name      string    `db:"name" bson:"name"`
+	Age       int       `db:"age" bson:"age"`
+	Active    bool      `db:"active" bson:"active"`
+	CreatedAt time.Time `db:"created_at" bson:"created_at"`
 }
 
-func ExampleCRUD(client *mongo.Client) {
-    // Get collection
-    collection := client.Database("myapp").Collection("users")
+func main() {
+	ctx := context.Background()
 
-    // Create a typed store for Users
-    userStore := storex.NewTypedMongo[User](collection)
-    ctx := context.Background()
-    
-    // Create a new user
-    newUser := User{
-        Name:      "John Doe",
-        Email:     "john@example.com",
-        CreatedAt: time.Now().Unix(),
-    }
-    
-    createdUser, err := userStore.Create(ctx, newUser)
-    if err != nil {
-        // Handle error
-        return
-    }
-    
-    // Find by ID
-    user, err := userStore.FindByID(ctx, createdUser.ID)
-    if err != nil {
-        // Handle error
-        return
-    }
-    
-    // Update user
-    user.Name = "John Smith"
-    updatedUser, err := userStore.Update(ctx, user.ID, user)
-    if err != nil {
-        // Handle error
-        return
-    }
-    
-    // Delete user
-    err = userStore.Delete(ctx, user.ID)
-    if err != nil {
-        // Handle error
-        return
-    }
+	// Choose one of these initialization blocks based on your database:
+	
+	// PostgreSQL initialization
+	db, err := sqlx.Connect("postgres", "postgres://username:password@localhost/mydatabase?sslmode=disable")
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	userRepo := storex.NewPgRepository[User](db, "users", "id")
+
+	// MongoDB initialization
+	/*
+	mongoClient, err := mongo.Connect(ctx, options.Client().ApplyURI("mongodb://localhost:27017"))
+	if err != nil {
+		log.Fatalf("Failed to connect to MongoDB: %v", err)
+	}
+	collection := mongoClient.Database("mydatabase").Collection("users")
+	userRepo := storex.NewMongoRepository[User](collection, "_id")
+	*/
+
+	// Create a new user
+	newUser := User{
+		Email:     "john@example.com",
+		Name:      "John Doe",
+		Age:       30,
+		Active:    true,
+		CreatedAt: time.Now(),
+	}
+
+	createdUser, err := userRepo.Create(ctx, newUser)
+	if err != nil {
+		log.Fatalf("Failed to create user: %v", err)
+	}
+	fmt.Printf("Created user with ID: %s\n", createdUser.ID)
+
+	// Find user by ID
+	user, err := userRepo.FindByID(ctx, createdUser.ID)
+	if err != nil {
+		log.Fatalf("Failed to find user: %v", err)
+	}
+	fmt.Printf("Found user: %s (%s)\n", user.Name, user.Email)
+
+	// Find one with filter
+	filterUser, err := userRepo.FindOne(ctx, map[string]any{
+		"email": "john@example.com",
+	})
+	if err != nil {
+		log.Fatalf("Failed to find user by email: %v", err)
+	}
+	fmt.Printf("Found user by email: %s\n", filterUser.Name)
+
+	// Update user
+	user.Name = "John Smith"
+	updatedUser, err := userRepo.Update(ctx, user.ID, user)
+	if err != nil {
+		log.Fatalf("Failed to update user: %v", err)
+	}
+	fmt.Printf("Updated user name to: %s\n", updatedUser.Name)
+
+	// Delete user
+	err = userRepo.Delete(ctx, user.ID)
+	if err != nil {
+		log.Fatalf("Failed to delete user: %v", err)
+	}
+	fmt.Println("User deleted successfully")
 }
 ```
 
@@ -393,49 +424,88 @@ func ExampleCRUD(client *mongo.Client) {
 package main
 
 import (
-    "context"
-    "fmt"
-    
-    "github.com/Abraxas-365/craftable/storex"
-    "go.mongodb.org/mongo-driver/mongo"
+	"context"
+	"fmt"
+	"log"
+
+	"github.com/jmoiron/sqlx"
+	_ "github.com/lib/pq"
+	"github.com/yourusername/storex"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-func ExamplePagination(client *mongo.Client) {
-    collection := client.Database("myapp").Collection("users")
-    userStore := storex.NewTypedMongo[User](collection)
+func main() {
+	ctx := context.Background()
 
-    // Create pagination options
-    opts := storex.DefaultPaginationOptions()
-    opts.Page = 1
-    opts.PageSize = 10
-    opts.OrderBy = "created_at"
-    opts.Desc = true
-    
-    // Add filters
-    opts = opts.WithFilter("name", "John")
-    opts = opts.WithFilter("active", true)
+	// Initialize your chosen database (see previous example)
+	
+	// For this example, we'll assume PostgreSQL
+	db, err := sqlx.Connect("postgres", "postgres://username:password@localhost/mydatabase?sslmode=disable")
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	userRepo := storex.NewPgRepository[User](db, "users", "id")
 
-    // Perform paginated query
-    ctx := context.Background()
-    result, err := userStore.Paginate(ctx, opts)
-    if err != nil {
-        // Handle error
-        return
-    }
+	// Basic pagination - get first page of users
+	paginationOpts := storex.PaginationOptions{
+		Page:     1,
+		PageSize: 10,
+		OrderBy:  "created_at",
+		Desc:     true, // newest first
+	}
 
-    // Access results
-    for _, user := range result.Data {
-        fmt.Println(user.Name, user.Email)
-    }
+	result, err := userRepo.Paginate(ctx, paginationOpts)
+	if err != nil {
+		log.Fatalf("Pagination failed: %v", err)
+	}
 
-    // Pagination metadata
-    fmt.Printf("Page %d of %d (Total: %d items)\n", 
-        result.Page.Number, result.Page.Pages, result.Page.Total)
-    
-    // Check for more pages
-    if result.HasNext() {
-        fmt.Println("More pages available")
-    }
+	fmt.Printf("Found %d users (page %d of %d)\n", 
+		result.Page.Total, result.Page.Number, result.Page.Pages)
+	
+	for i, user := range result.Data {
+		fmt.Printf("%d. %s (%s)\n", i+1, user.Name, user.Email)
+	}
+
+	// Pagination with filtering - active users over 25
+	paginationWithFilters := storex.DefaultPaginationOptions().
+		WithFilter("active", true).
+		WithFilter("age", map[string]any{"$gt": 25}) // MongoDB style filter (works with PG adapter too)
+
+	filteredResult, err := userRepo.Paginate(ctx, paginationWithFilters)
+	if err != nil {
+		log.Fatalf("Filtered pagination failed: %v", err)
+	}
+
+	fmt.Printf("Found %d active users over 25\n", filteredResult.Page.Total)
+	
+	// Using query builder for more complex pagination
+	qb := storex.NewQueryBuilder[User]().
+		Where("active", "=", true).
+		Where("age", ">", 25).
+		OrderBy("name", false). // ascending
+		Limit(10).
+		Select("id", "name", "email")
+	
+	builderResult, err := userRepo.Paginate(ctx, qb.ToPaginationOptions())
+	if err != nil {
+		log.Fatalf("Query builder pagination failed: %v", err)
+	}
+	
+	fmt.Printf("Found %d users with query builder\n", builderResult.Page.Total)
+	
+	// Navigation through pages
+	if builderResult.HasNext() {
+		nextPageOpts := qb.ToPaginationOptions()
+		nextPageOpts.Page++
+		
+		nextPage, err := userRepo.Paginate(ctx, nextPageOpts)
+		if err != nil {
+			log.Fatalf("Next page retrieval failed: %v", err)
+		}
+		
+		fmt.Printf("Next page has %d users\n", len(nextPage.Data))
+	}
 }
 ```
 

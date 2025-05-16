@@ -3,13 +3,14 @@ module github.com/Abraxas-365/craftable
 go 1.24.2
 
 require (
-	github.com/Abraxas-365/kbservice v0.0.19
 	github.com/aws/aws-sdk-go-v2 v1.36.3
 	github.com/aws/aws-sdk-go-v2/config v1.29.14
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.79.3
 	github.com/fatih/color v1.18.0
 	github.com/gofiber/fiber/v2 v2.52.6
 	github.com/golang-jwt/jwt/v5 v5.2.2
+	github.com/google/uuid v1.6.0
+	github.com/jmoiron/sqlx v1.4.0
 	github.com/lib/pq v1.10.9
 	github.com/openai/openai-go v0.1.0-beta.10
 	github.com/pkoukk/tiktoken-go v0.1.7
@@ -36,7 +37,6 @@ require (
 	github.com/aws/smithy-go v1.22.2 // indirect
 	github.com/dlclark/regexp2 v1.10.0 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/klauspost/compress v1.17.9 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect

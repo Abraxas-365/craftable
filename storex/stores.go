@@ -2,8 +2,6 @@ package storex
 
 import (
 	"context"
-	"reflect"
-	"strings"
 	"time"
 )
 
@@ -121,6 +119,43 @@ type TxManager interface {
 	WithTransaction(ctx context.Context, fn func(txCtx context.Context) error) error
 }
 
+// SearchOptions configures a search operation
+type SearchOptions struct {
+	Fields []string           // Fields to search in
+	Boost  map[string]float64 // Field boosting factors
+	Limit  int                // Maximum results to return
+	Offset int                // Number of results to skip
+}
+
+// Searchable provides full-text search capabilities
+type Searchable[T any] interface {
+	// Search performs a full-text search
+	Search(ctx context.Context, query string, opts SearchOptions) ([]T, error)
+}
+
+// ChangeEvent represents a data change notification
+type ChangeEvent[T any] struct {
+	Operation string    // insert, update, delete
+	OldValue  *T        // Previous value (nil for inserts)
+	NewValue  *T        // New value (nil for deletes)
+	Timestamp time.Time // When the change occurred
+}
+
+// ChangeStream provides real-time notifications for data changes
+type ChangeStream[T any] interface {
+	// Watch creates a stream of change events
+	Watch(ctx context.Context, filter map[string]any) (<-chan ChangeEvent[T], error)
+}
+
+// QueryBuilder provides a type-safe way to construct queries
+type QueryBuilder[T any] struct {
+	filters []Filter
+	sorts   []Sort
+	limit   int
+	offset  int
+	fields  []string
+}
+
 // Filter represents a query filter condition
 type Filter struct {
 	Field string
@@ -132,15 +167,6 @@ type Filter struct {
 type Sort struct {
 	Field string
 	Desc  bool
-}
-
-// QueryBuilder provides a type-safe way to construct queries
-type QueryBuilder[T any] struct {
-	filters []Filter
-	sorts   []Sort
-	limit   int
-	offset  int
-	fields  []string
 }
 
 // NewQueryBuilder creates a new query builder
@@ -195,6 +221,7 @@ func (qb *QueryBuilder[T]) ToPaginationOptions() PaginationOptions {
 
 	// Add filters
 	for _, filter := range qb.filters {
+		// Convert filter.Op to a map-based filter
 		opts = opts.WithFilter(filter.Field, filter.Value)
 	}
 
@@ -210,94 +237,3 @@ func (qb *QueryBuilder[T]) ToPaginationOptions() PaginationOptions {
 	return opts
 }
 
-// Searchable provides full-text search capabilities
-type Searchable[T any] interface {
-	// Search performs a full-text search
-	Search(ctx context.Context, query string, opts SearchOptions) ([]T, error)
-}
-
-// SearchOptions configures a search operation
-type SearchOptions struct {
-	Fields []string           // Fields to search in
-	Boost  map[string]float64 // Field boosting factors
-	Limit  int                // Maximum results to return
-	Offset int                // Number of results to skip
-}
-
-// ChangeEvent represents a data change notification
-type ChangeEvent[T any] struct {
-	Operation string    // insert, update, delete
-	OldValue  *T        // Previous value (nil for inserts)
-	NewValue  *T        // New value (nil for deletes)
-	Timestamp time.Time // When the change occurred
-}
-
-// ChangeStream provides real-time notifications for data changes
-type ChangeStream[T any] interface {
-	// Watch creates a stream of change events
-	Watch(ctx context.Context, filter map[string]any) (<-chan ChangeEvent[T], error)
-}
-
-func extractIDValue(item interface{}, idField string) interface{} {
-	// Get the value of the item
-	val := reflect.ValueOf(item)
-
-	// If item is a pointer, get the value it points to
-	if val.Kind() == reflect.Ptr {
-		if val.IsNil() {
-			return nil
-		}
-		val = val.Elem()
-	}
-
-	// Make sure we're dealing with a struct
-	if val.Kind() != reflect.Struct {
-		return nil
-	}
-
-	// Get the type for field lookup
-	typ := val.Type()
-
-	// First, try to find the field directly by name
-	field := val.FieldByName(idField)
-	if field.IsValid() && field.CanInterface() {
-		return field.Interface()
-	}
-
-	// If not found, try to match by DB tag
-	for i := 0; i < typ.NumField(); i++ {
-		fieldType := typ.Field(i)
-
-		// Check if the field has the db tag matching the idField
-		dbTag := fieldType.Tag.Get("db")
-		if dbTag == idField {
-			// Found a match with the tag
-			field = val.Field(i)
-			if field.IsValid() && field.CanInterface() {
-				return field.Interface()
-			}
-		}
-
-		// Also check if the lowercase field name matches (convention)
-		if strings.EqualFold(fieldType.Name, idField) {
-			field = val.Field(i)
-			if field.IsValid() && field.CanInterface() {
-				return field.Interface()
-			}
-		}
-	}
-
-	// If we couldn't find a match, look for fields with common ID names
-	if strings.EqualFold(idField, "id") {
-		commonIDFields := []string{"ID", "Id", "Uuid", "UUID", "Guid", "GUID"}
-		for _, name := range commonIDFields {
-			field := val.FieldByName(name)
-			if field.IsValid() && field.CanInterface() {
-				return field.Interface()
-			}
-		}
-	}
-
-	// Couldn't find a matching field
-	return nil
-}

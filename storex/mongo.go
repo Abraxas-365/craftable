@@ -3,6 +3,8 @@ package storex
 import (
 	"context"
 	"fmt"
+	"reflect"
+	"strings"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -11,437 +13,202 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// TypedMongo provides MongoDB operations for a specific type
-type TypedMongo[T any] struct {
-	Collection *mongo.Collection
-	IDField    string // Field name for the ID (default: "_id")
+// MongoRepository is a MongoDB implementation of Repository
+type MongoRepository[T any] struct {
+	collection *mongo.Collection
+	idField    string
 }
 
-// NewTypedMongo creates a new TypedMongo helper for a specific type
-func NewTypedMongo[T any](collection *mongo.Collection) *TypedMongo[T] {
-	return &TypedMongo[T]{
-		Collection: collection,
-		IDField:    "_id",
+// NewMongoRepository creates a new MongoDB repository
+func NewMongoRepository[T any](collection *mongo.Collection, idField string) *MongoRepository[T] {
+	if idField == "" {
+		idField = "_id"
+	}
+	return &MongoRepository[T]{
+		collection: collection,
+		idField:    idField,
 	}
 }
 
-// WithIDField sets a custom ID field name
-func (m *TypedMongo[T]) WithIDField(fieldName string) *TypedMongo[T] {
-	m.IDField = fieldName
-	return m
-}
+// Create adds a new entity to the database
+func (r *MongoRepository[T]) Create(ctx context.Context, item T) (T, error) {
+	var empty T
 
-// Create adds a new document to the collection
-func (m *TypedMongo[T]) Create(ctx context.Context, item T) (T, error) {
-	result, err := m.Collection.InsertOne(ctx, item)
+	// Handle ID generation if using ObjectID
+	v := reflect.ValueOf(item)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+
+	// Check for auto-generation of ID
+	t := v.Type()
+	for i := 0; i < v.NumField(); i++ {
+		field := t.Field(i)
+		tag := field.Tag.Get("bson")
+		if tag == r.idField || strings.HasPrefix(tag, r.idField+",") {
+			// If ID field is empty and type is string, generate ObjectID
+			if isEmptyValue(v.Field(i)) && v.Field(i).Type().Kind() == reflect.String {
+				idStr := primitive.NewObjectID().Hex()
+				v.Field(i).SetString(idStr)
+			}
+		}
+	}
+
+	result, err := r.collection.InsertOne(ctx, item)
 	if err != nil {
-		return item, storeErrors.New(ErrMongoInsertFailed).
-			WithDetail("collection", m.Collection.Name()).
-			WithCause(err)
+		return empty, storeErrors.NewWithCause(ErrCreateFailed, err)
 	}
 
-	// If the item has an ID field, we need to fetch the complete document
-	if result.InsertedID != nil {
-		filter := bson.M{m.IDField: result.InsertedID}
-		err = m.Collection.FindOne(ctx, filter).Decode(&item)
+	// For auto-generated IDs, we need to fetch the item
+	if r.idField == "_id" && result.InsertedID != nil {
+		filter := bson.M{"_id": result.InsertedID}
+		err = r.collection.FindOne(ctx, filter).Decode(&item)
 		if err != nil {
-			return item, storeErrors.New(ErrMongoFindFailed).
-				WithDetail("id", fmt.Sprintf("%v", result.InsertedID)).
-				WithDetail("collection", m.Collection.Name()).
-				WithCause(err)
+			return empty, storeErrors.NewWithCause(ErrSQLQueryFailed, err)
 		}
 	}
 
 	return item, nil
 }
 
-// FindByID retrieves a document by ID
-func (m *TypedMongo[T]) FindByID(ctx context.Context, id string) (T, error) {
+// FindByID retrieves an entity by its ID
+func (r *MongoRepository[T]) FindByID(ctx context.Context, id string) (T, error) {
 	var result T
-	var objectID interface{} = id
+	var empty T
 
-	// If using ObjectIDs, convert string to ObjectID
-	if m.IDField == "_id" {
-		var err error
-		objectID, err = primitive.ObjectIDFromHex(id)
+	// Convert string ID to ObjectID if necessary
+	var filter bson.M
+	if r.idField == "_id" {
+		objID, err := primitive.ObjectIDFromHex(id)
 		if err != nil {
-			return result, storeErrors.New(ErrInvalidID).
-				WithDetail("id", id).
-				WithCause(err)
+			return empty, storeErrors.NewWithMessage(ErrInvalidID, "Invalid ObjectID format")
 		}
+		filter = bson.M{"_id": objID}
+	} else {
+		filter = bson.M{r.idField: id}
 	}
 
-	err := m.Collection.FindOne(ctx, bson.M{m.IDField: objectID}).Decode(&result)
+	err := r.collection.FindOne(ctx, filter).Decode(&result)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			return result, storeErrors.New(ErrRecordNotFound).
-				WithDetail("id", id).
-				WithDetail("collection", m.Collection.Name())
+			return empty, storeErrors.NewWithMessage(ErrRecordNotFound, "ID: "+id)
 		}
-		return result, storeErrors.New(ErrMongoFindFailed).
-			WithDetail("id", id).
-			WithDetail("collection", m.Collection.Name()).
-			WithCause(err)
+		return empty, storeErrors.NewWithCause(ErrSQLQueryFailed, err)
 	}
 
 	return result, nil
 }
 
-// FindOne retrieves a single document matching the filter
-func (m *TypedMongo[T]) FindOne(ctx context.Context, filter map[string]any) (T, error) {
+// FindOne retrieves a single entity that matches the filter
+func (r *MongoRepository[T]) FindOne(ctx context.Context, filter map[string]any) (T, error) {
 	var result T
-	bsonFilter := convertMapToBson(filter)
+	var empty T
 
-	err := m.Collection.FindOne(ctx, bsonFilter).Decode(&result)
+	if len(filter) == 0 {
+		return empty, storeErrors.NewWithMessage(ErrInvalidQuery, "No filter provided")
+	}
+
+	// Convert map to BSON Document
+	bsonFilter := bson.M{}
+	for k, v := range filter {
+		bsonFilter[k] = v
+	}
+
+	err := r.collection.FindOne(ctx, bsonFilter).Decode(&result)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			return result, storeErrors.New(ErrRecordNotFound).
-				WithDetail("filter", fmt.Sprintf("%v", filter)).
-				WithDetail("collection", m.Collection.Name())
+			return empty, storeErrors.NewWithMessage(ErrRecordNotFound, "Filter not matched")
 		}
-		return result, storeErrors.New(ErrMongoFindFailed).
-			WithDetail("filter", fmt.Sprintf("%v", filter)).
-			WithDetail("collection", m.Collection.Name()).
-			WithCause(err)
+		return empty, storeErrors.NewWithCause(ErrSQLQueryFailed, err)
 	}
 
 	return result, nil
 }
 
-// Update modifies an existing document
-func (m *TypedMongo[T]) Update(ctx context.Context, id string, item T) (T, error) {
-	var objectID interface{} = id
+// Update modifies an existing entity
+func (r *MongoRepository[T]) Update(ctx context.Context, id string, item T) (T, error) {
+	var empty T
 
-	// If using ObjectIDs, convert string to ObjectID
-	if m.IDField == "_id" {
-		var err error
-		objectID, err = primitive.ObjectIDFromHex(id)
+	// Prepare filter based on ID type
+	var filter bson.M
+	if r.idField == "_id" {
+		objID, err := primitive.ObjectIDFromHex(id)
 		if err != nil {
-			return item, storeErrors.New(ErrInvalidID).
-				WithDetail("id", id).
-				WithCause(err)
+			return empty, storeErrors.NewWithMessage(ErrInvalidID, "Invalid ObjectID format")
 		}
+		filter = bson.M{"_id": objID}
+	} else {
+		filter = bson.M{r.idField: id}
 	}
 
-	// Create update document
+	// Update the document
 	update := bson.M{"$set": item}
+	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
 
-	// Execute update
-	result, err := m.Collection.UpdateOne(
-		ctx,
-		bson.M{m.IDField: objectID},
-		update,
-	)
+	var result T
+	err := r.collection.FindOneAndUpdate(ctx, filter, update, opts).Decode(&result)
 	if err != nil {
-		return item, storeErrors.New(ErrMongoUpdateFailed).
-			WithDetail("id", id).
-			WithDetail("collection", m.Collection.Name()).
-			WithCause(err)
+		if err == mongo.ErrNoDocuments {
+			return empty, storeErrors.NewWithMessage(ErrRecordNotFound, "ID: "+id)
+		}
+		return empty, storeErrors.NewWithCause(ErrUpdateFailed, err)
 	}
 
-	if result.MatchedCount == 0 {
-		return item, storeErrors.New(ErrRecordNotFound).
-			WithDetail("id", id).
-			WithDetail("collection", m.Collection.Name())
-	}
-
-	// Fetch the updated document
-	return m.FindByID(ctx, id)
+	return result, nil
 }
 
-// Delete removes a document from the collection
-func (m *TypedMongo[T]) Delete(ctx context.Context, id string) error {
-	var objectID interface{} = id
-
-	// If using ObjectIDs, convert string to ObjectID
-	if m.IDField == "_id" {
-		var err error
-		objectID, err = primitive.ObjectIDFromHex(id)
+// Delete removes an entity from the store
+func (r *MongoRepository[T]) Delete(ctx context.Context, id string) error {
+	// Prepare filter based on ID type
+	var filter bson.M
+	if r.idField == "_id" {
+		objID, err := primitive.ObjectIDFromHex(id)
 		if err != nil {
-			return storeErrors.New(ErrInvalidID).
-				WithDetail("id", id).
-				WithCause(err)
+			return storeErrors.NewWithMessage(ErrInvalidID, "Invalid ObjectID format")
 		}
+		filter = bson.M{"_id": objID}
+	} else {
+		filter = bson.M{r.idField: id}
 	}
 
-	result, err := m.Collection.DeleteOne(ctx, bson.M{m.IDField: objectID})
+	result, err := r.collection.DeleteOne(ctx, filter)
 	if err != nil {
-		return storeErrors.New(ErrMongoDeleteFailed).
-			WithDetail("id", id).
-			WithDetail("collection", m.Collection.Name()).
-			WithCause(err)
+		return storeErrors.NewWithCause(ErrDeleteFailed, err)
 	}
 
 	if result.DeletedCount == 0 {
-		return storeErrors.New(ErrRecordNotFound).
-			WithDetail("id", id).
-			WithDetail("collection", m.Collection.Name())
+		return storeErrors.NewWithMessage(ErrRecordNotFound, "ID: "+id)
 	}
 
 	return nil
 }
 
-// Paginate retrieves documents with pagination
-func (m *TypedMongo[T]) Paginate(ctx context.Context, opts PaginationOptions) (Paginated[T], error) {
-	return PaginateMongo[T](ctx, m.Collection, opts)
-}
-
-// BulkInsert adds multiple documents in a single operation
-func (m *TypedMongo[T]) BulkInsert(ctx context.Context, items []T) error {
-	if len(items) == 0 {
-		return nil
-	}
-
-	// Convert items to interface slice
-	docs := make([]interface{}, len(items))
-	for i, item := range items {
-		docs[i] = item
-	}
-
-	// Execute bulk insert
-	_, err := m.Collection.InsertMany(ctx, docs)
-	if err != nil {
-		return storeErrors.New(ErrBulkOpFailed).
-			WithDetail("operation", "insert").
-			WithDetail("count", len(items)).
-			WithDetail("collection", m.Collection.Name()).
-			WithCause(err)
-	}
-
-	return nil
-}
-
-// BulkUpdate modifies multiple documents in a single operation
-func (m *TypedMongo[T]) BulkUpdate(ctx context.Context, items []T) error {
-	if len(items) == 0 {
-		return nil
-	}
-
-	// Create bulk write models
-	models := make([]mongo.WriteModel, 0, len(items))
-	for _, item := range items {
-		// Extract ID field value using reflection
-		idValue := extractIDValue(item, m.IDField)
-		if idValue == nil {
-			continue
-		}
-
-		model := mongo.NewUpdateOneModel().
-			SetFilter(bson.M{m.IDField: idValue}).
-			SetUpdate(bson.M{"$set": item})
-
-		models = append(models, model)
-	}
-
-	if len(models) == 0 {
-		return nil
-	}
-
-	// Execute bulk write
-	_, err := m.Collection.BulkWrite(ctx, models)
-	if err != nil {
-		return storeErrors.New(ErrBulkOpFailed).
-			WithDetail("operation", "update").
-			WithDetail("count", len(models)).
-			WithDetail("collection", m.Collection.Name()).
-			WithCause(err)
-	}
-
-	return nil
-}
-
-// BulkDelete removes multiple documents in a single operation
-func (m *TypedMongo[T]) BulkDelete(ctx context.Context, ids []string) error {
-	if len(ids) == 0 {
-		return nil
-	}
-
-	// Convert string IDs to appropriate type
-	idValues := make([]interface{}, 0, len(ids))
-	for _, id := range ids {
-		if m.IDField == "_id" {
-			// Convert to ObjectID if using MongoDB's native IDs
-			objectID, err := primitive.ObjectIDFromHex(id)
-			if err != nil {
-				continue // Skip invalid IDs
-			}
-			idValues = append(idValues, objectID)
-		} else {
-			idValues = append(idValues, id)
-		}
-	}
-
-	if len(idValues) == 0 {
-		return nil
-	}
-
-	// Execute bulk delete
-	_, err := m.Collection.DeleteMany(ctx, bson.M{m.IDField: bson.M{"$in": idValues}})
-	if err != nil {
-		return storeErrors.New(ErrBulkOpFailed).
-			WithDetail("operation", "delete").
-			WithDetail("count", len(ids)).
-			WithDetail("collection", m.Collection.Name()).
-			WithCause(err)
-	}
-
-	return nil
-}
-
-// Search performs a full-text search
-func (m *TypedMongo[T]) Search(ctx context.Context, query string, opts SearchOptions) ([]T, error) {
-	var results []T
-
-	// Create text search filter
-	filter := bson.M{"$text": bson.M{"$search": query}}
-
-	// Create find options
-	findOpts := options.Find()
-
-	// Set limit and skip
-	if opts.Limit > 0 {
-		findOpts.SetLimit(int64(opts.Limit))
-	}
-	if opts.Offset > 0 {
-		findOpts.SetSkip(int64(opts.Offset))
-	}
-
-	// Set sort by text score
-	findOpts.SetSort(bson.M{"score": bson.M{"$meta": "textScore"}})
-
-	// Set projection to include score
-	projection := bson.M{"score": bson.M{"$meta": "textScore"}}
-	findOpts.SetProjection(projection)
-
-	// Execute search
-	cursor, err := m.Collection.Find(ctx, filter, findOpts)
-	if err != nil {
-		return nil, storeErrors.New(ErrSearchFailed).
-			WithDetail("query", query).
-			WithDetail("collection", m.Collection.Name()).
-			WithCause(err)
-	}
-	defer cursor.Close(ctx)
-
-	// Decode results
-	if err := cursor.All(ctx, &results); err != nil {
-		return nil, storeErrors.New(ErrMongoDecodeFailed).
-			WithDetail("query", query).
-			WithDetail("collection", m.Collection.Name()).
-			WithCause(err)
-	}
-
-	return results, nil
-}
-
-// Watch creates a change stream for real-time notifications
-func (m *TypedMongo[T]) Watch(ctx context.Context, filter map[string]any) (<-chan ChangeEvent[T], error) {
-	// Create pipeline for change stream
-	pipeline := mongo.Pipeline{}
-
-	// Add match stage if filter is provided
-	if len(filter) > 0 {
-		bsonFilter := convertMapToBson(filter)
-		matchStage := bson.D{{Key: "$match", Value: bsonFilter}}
-		pipeline = append(pipeline, matchStage)
-	}
-
-	// Create options with full document lookup
-	opts := options.ChangeStream().SetFullDocument(options.UpdateLookup)
-
-	// Create change stream
-	changeStream, err := m.Collection.Watch(ctx, pipeline, opts)
-	if err != nil {
-		return nil, err
-	}
-
-	// Create channel for change events
-	eventChan := make(chan ChangeEvent[T], 100)
-
-	// Start goroutine to process change events
-	go func() {
-		defer changeStream.Close(ctx)
-		defer close(eventChan)
-
-		for changeStream.Next(ctx) {
-			var changeDoc struct {
-				OperationType string    `bson:"operationType"`
-				FullDocument  T         `bson:"fullDocument"`
-				DocumentKey   bson.M    `bson:"documentKey"`
-				ClusterTime   time.Time `bson:"clusterTime"`
-			}
-
-			if err := changeStream.Decode(&changeDoc); err != nil {
-				continue
-			}
-
-			// Create change event
-			event := ChangeEvent[T]{
-				Operation: changeDoc.OperationType,
-				Timestamp: changeDoc.ClusterTime,
-			}
-
-			// Set new value for insert and update operations
-			if changeDoc.OperationType == "insert" || changeDoc.OperationType == "update" ||
-				changeDoc.OperationType == "replace" {
-				newVal := changeDoc.FullDocument
-				event.NewValue = &newVal
-			}
-
-			// Send event to channel
-			select {
-			case eventChan <- event:
-				// Event sent successfully
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-
-	return eventChan, nil
-}
-
-// PaginateMongo is a helper function for MongoDB pagination
-func PaginateMongo[T any](
-	ctx context.Context,
-	collection *mongo.Collection,
-	opts PaginationOptions,
-) (Paginated[T], error) {
-	// Create filter from options
+// Paginate retrieves entities with pagination
+func (r *MongoRepository[T]) Paginate(ctx context.Context, opts PaginationOptions) (Paginated[T], error) {
+	// Convert filters to BSON
 	filter := bson.M{}
-
-	// Add filters from options
 	for k, v := range opts.Filters {
 		filter[k] = v
 	}
 
-	// 1. Count total documents
-	total, err := collection.CountDocuments(ctx, filter)
-	if err != nil {
-		return Paginated[T]{}, storeErrors.New(ErrMongoCountFailed).
-			WithDetail("collection", collection.Name()).
-			WithCause(err)
-	}
-
-	// 2. Set up options for pagination
+	// Build options
 	findOptions := options.Find()
 
-	// Set skip and limit
-	skip := int64((opts.Page - 1) * opts.PageSize)
-	limit := int64(opts.PageSize)
-	findOptions.SetSkip(skip)
-	findOptions.SetLimit(limit)
-
-	// Set sort
+	// Sorting
 	if opts.OrderBy != "" {
-		sortValue := 1
+		sortDir := 1
 		if opts.Desc {
-			sortValue = -1
+			sortDir = -1
 		}
-		findOptions.SetSort(bson.D{{Key: opts.OrderBy, Value: sortValue}})
+		findOptions.SetSort(bson.D{{Key: opts.OrderBy, Value: sortDir}})
 	}
 
-	// Set projection if fields are specified
+	// Pagination
+	offset := (opts.Page - 1) * opts.PageSize
+	findOptions.SetSkip(int64(offset))
+	findOptions.SetLimit(int64(opts.PageSize))
+
+	// Field selection if specified
 	if len(opts.Fields) > 0 {
 		projection := bson.M{}
 		for _, field := range opts.Fields {
@@ -450,35 +217,324 @@ func PaginateMongo[T any](
 		findOptions.SetProjection(projection)
 	}
 
-	// 3. Execute find with pagination
-	cursor, err := collection.Find(ctx, filter, findOptions)
+	// Execute the query
+	cursor, err := r.collection.Find(ctx, filter, findOptions)
 	if err != nil {
-		return Paginated[T]{}, storeErrors.New(ErrMongoFindFailed).
-			WithDetail("collection", collection.Name()).
-			WithDetail("filter", fmt.Sprintf("%v", filter)).
-			WithCause(err)
+		return Paginated[T]{}, storeErrors.NewWithCause(ErrSQLQueryFailed, err)
 	}
 	defer cursor.Close(ctx)
 
-	// 4. Decode the results
+	// Decode results
+	var items []T
+	if err = cursor.All(ctx, &items); err != nil {
+		return Paginated[T]{}, storeErrors.NewWithCause(ErrSQLQueryFailed, err)
+	}
+
+	// Count total documents
+	total, err := r.collection.CountDocuments(ctx, filter)
+	if err != nil {
+		return Paginated[T]{}, storeErrors.NewWithCause(ErrSQLCountFailed, err)
+	}
+
+	return NewPaginated(items, opts.Page, opts.PageSize, int(total)), nil
+}
+
+// MongoBulkOperator implements BulkOperator for MongoDB
+type MongoBulkOperator[T any] struct {
+	*MongoRepository[T]
+}
+
+// NewMongoBulkOperator creates a new MongoDB bulk operator
+func NewMongoBulkOperator[T any](repo *MongoRepository[T]) *MongoBulkOperator[T] {
+	return &MongoBulkOperator[T]{repo}
+}
+
+// BulkInsert adds multiple entities in a single operation
+func (b *MongoBulkOperator[T]) BulkInsert(ctx context.Context, items []T) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	// Convert T items to interface{} for InsertMany
+	documents := make([]interface{}, len(items))
+	for i, item := range items {
+		documents[i] = item
+	}
+
+	_, err := b.collection.InsertMany(ctx, documents)
+	if err != nil {
+		return storeErrors.NewWithCause(ErrBulkOpFailed, err)
+	}
+
+	return nil
+}
+
+// BulkUpdate modifies multiple entities in a single operation
+func (b *MongoBulkOperator[T]) BulkUpdate(ctx context.Context, items []T) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	// Create a bulk write operation
+	models := make([]mongo.WriteModel, 0, len(items))
+
+	for _, item := range items {
+		v := reflect.ValueOf(item)
+		if v.Kind() == reflect.Ptr {
+			v = v.Elem()
+		}
+
+		// Find the ID field
+		t := v.Type()
+		var id interface{}
+		var found bool
+
+		for i := 0; i < v.NumField(); i++ {
+			field := t.Field(i)
+			tag := field.Tag.Get("bson")
+			if tag == b.idField || strings.HasPrefix(tag, b.idField+",") {
+				id = v.Field(i).Interface()
+				found = true
+				break
+			}
+		}
+
+		if !found || id == nil {
+			return storeErrors.NewWithMessage(ErrInvalidID, "Missing ID for bulk update")
+		}
+
+		// Create update model
+		filter := bson.M{b.idField: id}
+		update := bson.M{"$set": item}
+
+		model := mongo.NewUpdateOneModel().
+			SetFilter(filter).
+			SetUpdate(update)
+
+		models = append(models, model)
+	}
+
+	_, err := b.collection.BulkWrite(ctx, models)
+	if err != nil {
+		return storeErrors.NewWithCause(ErrBulkOpFailed, err)
+	}
+
+	return nil
+}
+
+// BulkDelete removes multiple entities in a single operation
+func (b *MongoBulkOperator[T]) BulkDelete(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	// Convert string IDs to ObjectIDs if necessary
+	var filter bson.M
+	if b.idField == "_id" {
+		objectIDs := make([]primitive.ObjectID, 0, len(ids))
+		for _, id := range ids {
+			objID, err := primitive.ObjectIDFromHex(id)
+			if err != nil {
+				return storeErrors.NewWithMessage(ErrInvalidID, "Invalid ObjectID format")
+			}
+			objectIDs = append(objectIDs, objID)
+		}
+		filter = bson.M{"_id": bson.M{"$in": objectIDs}}
+	} else {
+		filter = bson.M{b.idField: bson.M{"$in": ids}}
+	}
+
+	result, err := b.collection.DeleteMany(ctx, filter)
+	if err != nil {
+		return storeErrors.NewWithCause(ErrBulkOpFailed, err)
+	}
+
+	if result.DeletedCount == 0 {
+		return storeErrors.NewWithMessage(ErrRecordNotFound, "No records matched IDs for deletion")
+	}
+
+	return nil
+}
+
+// MongoTxManager provides transaction support for MongoDB
+type MongoTxManager struct {
+	client *mongo.Client
+}
+
+// NewMongoTxManager creates a new MongoDB transaction manager
+func NewMongoTxManager(client *mongo.Client) *MongoTxManager {
+	return &MongoTxManager{client: client}
+}
+
+// WithTransaction executes operations within a transaction
+func (tm *MongoTxManager) WithTransaction(ctx context.Context, fn func(txCtx context.Context) error) error {
+	session, err := tm.client.StartSession()
+	if err != nil {
+		return storeErrors.NewWithCause(ErrTxBeginFailed, err)
+	}
+	defer session.EndSession(ctx)
+
+	_, err = session.WithTransaction(ctx, func(sessCtx mongo.SessionContext) (interface{}, error) {
+		err := fn(sessCtx)
+		if err != nil {
+			return nil, err // Error is already wrapped by the function
+		}
+		return nil, nil
+	})
+
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// MongoSearchable provides search for MongoDB
+type MongoSearchable[T any] struct {
+	*MongoRepository[T]
+}
+
+// NewMongoSearchable creates a new MongoDB searchable repository
+func NewMongoSearchable[T any](repo *MongoRepository[T]) *MongoSearchable[T] {
+	return &MongoSearchable[T]{repo}
+}
+
+// Search performs a text search using MongoDB's text index
+func (s *MongoSearchable[T]) Search(ctx context.Context, query string, opts SearchOptions) ([]T, error) {
+	if len(opts.Fields) == 0 {
+		return nil, storeErrors.NewWithMessage(ErrInvalidQuery, "No search fields specified")
+	}
+
+	// Set default limit if not specified
+	if opts.Limit <= 0 {
+		opts.Limit = 25
+	}
+
+	// Create text search
+	textSearchQuery := bson.M{
+		"$text": bson.M{
+			"$search": query,
+		},
+	}
+
+	// Configure search options
+	findOptions := options.Find()
+
+	// Projection with score
+	scoreProjection := bson.M{"score": bson.M{"$meta": "textScore"}}
+	findOptions.SetProjection(scoreProjection)
+
+	// Sort by score
+	findOptions.SetSort(bson.D{{Key: "score", Value: bson.M{"$meta": "textScore"}}})
+
+	// Limit and skip
+	findOptions.SetLimit(int64(opts.Limit))
+	findOptions.SetSkip(int64(opts.Offset))
+
+	// Execute search
+	cursor, err := s.collection.Find(ctx, textSearchQuery, findOptions)
+	if err != nil {
+		return nil, storeErrors.NewWithCause(ErrSearchFailed, err)
+	}
+	defer cursor.Close(ctx)
+
+	// Decode results
 	var results []T
-	if err := cursor.All(ctx, &results); err != nil {
-		return Paginated[T]{}, storeErrors.New(ErrMongoDecodeFailed).
-			WithDetail("collection", collection.Name()).
-			WithCause(err)
+	if err = cursor.All(ctx, &results); err != nil {
+		return nil, storeErrors.NewWithCause(ErrSearchFailed, err)
 	}
 
-	// 5. Create and return the paginated result
-	return NewPaginated(results, opts.Page, opts.PageSize, int(total)), nil
+	return results, nil
 }
 
-// Helper functions
+// MongoChangeStream provides real-time notifications for MongoDB using change streams
+type MongoChangeStream[T any] struct {
+	*MongoRepository[T]
+}
 
-// convertMapToBson converts a map to a BSON document
-func convertMapToBson(m map[string]any) bson.M {
-	bsonDoc := bson.M{}
-	for k, v := range m {
-		bsonDoc[k] = v
+// NewMongoChangeStream creates a new MongoDB change stream
+func NewMongoChangeStream[T any](repo *MongoRepository[T]) *MongoChangeStream[T] {
+	return &MongoChangeStream[T]{repo}
+}
+
+// Watch creates a stream of change events
+func (cs *MongoChangeStream[T]) Watch(ctx context.Context, filter map[string]any) (<-chan ChangeEvent[T], error) {
+	// Configure the change stream pipeline
+	pipeline := mongo.Pipeline{}
+
+	// Add match stage if filter is provided
+	if len(filter) > 0 {
+		matchStage := bson.D{{Key: "$match", Value: filter}}
+		pipeline = append(pipeline, matchStage)
 	}
-	return bsonDoc
+
+	// Create options
+	opts := options.ChangeStream().SetFullDocument(options.UpdateLookup)
+
+	// Set up the change stream
+	stream, err := cs.collection.Watch(ctx, pipeline, opts)
+	if err != nil {
+		return nil, storeErrors.NewWithCause(ErrConnectionFailed, err)
+	}
+
+	events := make(chan ChangeEvent[T])
+
+	go func() {
+		defer close(events)
+		defer stream.Close(ctx)
+
+		for stream.Next(ctx) {
+			var changeDoc struct {
+				OperationType string              `bson:"operationType"`
+				DocumentKey   bson.M              `bson:"documentKey"`
+				FullDocument  T                   `bson:"fullDocument"`
+				Timestamp     primitive.Timestamp `bson:"clusterTime"`
+			}
+
+			if err := stream.Decode(&changeDoc); err != nil {
+				fmt.Printf("Error decoding change stream document: %v\n", err)
+				continue
+			}
+
+			// Map MongoDB operation types to our operation types
+			operation := ""
+			switch changeDoc.OperationType {
+			case "insert":
+				operation = "insert"
+			case "update", "replace":
+				operation = "update"
+			case "delete":
+				operation = "delete"
+			default:
+				continue // Skip other operations
+			}
+
+			// Build the change event
+			var oldValue, newValue *T
+			if operation != "delete" {
+				newValue = &changeDoc.FullDocument
+			}
+
+			event := ChangeEvent[T]{
+				Operation: operation,
+				OldValue:  oldValue,
+				NewValue:  newValue,
+				Timestamp: time.Unix(int64(changeDoc.Timestamp.T), 0),
+			}
+
+			select {
+			case events <- event:
+				// Event sent successfully
+			case <-ctx.Done():
+				return
+			}
+		}
+
+		if err := stream.Err(); err != nil {
+			fmt.Printf("Change stream error: %v\n", err)
+		}
+	}()
+
+	return events, nil
 }
+

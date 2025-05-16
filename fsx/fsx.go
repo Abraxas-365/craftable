@@ -50,3 +50,8 @@ type FileSystem interface {
 	FileDeleter
 	PathOperations
 }
+
+type PathReader interface {
+	FileReader
+	PathOperations
+}

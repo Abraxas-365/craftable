@@ -91,11 +91,27 @@ func (g *Generator) GenerateCurlDocs(baseURL string, outputPath string) error {
 }
 
 func generateCurlCommand(baseURL string, basePath string, endpoint *Endpoint) string {
+	// Build the base URL
 	fullURL := fmt.Sprintf("%s%s%s", baseURL, basePath, endpoint.Path)
+
+	// Add query parameters if they exist
+	if len(endpoint.QueryParams) > 0 {
+		queryParams := []string{}
+		for _, param := range endpoint.QueryParams {
+			var value string
+			if param.Default != nil {
+				value = fmt.Sprintf("%v", param.Default)
+			} else {
+				value = fmt.Sprintf("<%s>", strings.ToUpper(param.Name))
+			}
+			queryParams = append(queryParams, fmt.Sprintf("%s=%s", param.Name, value))
+		}
+		fullURL += "?" + strings.Join(queryParams, "&")
+	}
 
 	curl := fmt.Sprintf("curl -X %s \\\n  %s", endpoint.Method, fullURL)
 
-	// Add headers - fixed to properly iterate over a slice
+	// Add headers
 	for _, header := range endpoint.Headers {
 		curl += fmt.Sprintf(" \\\n  -H '%s: %s'", header.Name, header.Value)
 	}

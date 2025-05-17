@@ -80,21 +80,40 @@ func (o PaginationOptions) WithFilter(key string, value any) PaginationOptions {
 	return o
 }
 
-// Repository defines the basic CRUD operations for any entity
+// Repository provides a generic data access interface for entity operations.
+// The interface uses string-based IDs for flexibility across different ID types.
 type Repository[T any] interface {
 	// Create adds a new entity to the store
 	Create(ctx context.Context, item T) (T, error)
 
 	// FindByID retrieves an entity by its ID
+	//
+	// Usage with integer IDs:
+	//   entity, err := repo.FindByID(ctx, strconv.Itoa(42))
+	//
+	// Usage with UUID IDs:
+	//   entity, err := repo.FindByID(ctx, myUUID.String())
 	FindByID(ctx context.Context, id string) (T, error)
 
 	// FindOne retrieves a single entity that matches the filter
 	FindOne(ctx context.Context, filter map[string]any) (T, error)
 
 	// Update modifies an existing entity
+	//
+	// Usage with integer IDs:
+	//   updatedEntity, err := repo.Update(ctx, strconv.Itoa(42), entityToUpdate)
+	//
+	// Usage with UUID IDs:
+	//   updatedEntity, err := repo.Update(ctx, myUUID.String(), entityToUpdate)
 	Update(ctx context.Context, id string, item T) (T, error)
 
 	// Delete removes an entity from the store
+	//
+	// Usage with integer IDs:
+	//   err := repo.Delete(ctx, strconv.Itoa(42))
+	//
+	// Usage with UUID IDs:
+	//   err := repo.Delete(ctx, myUUID.String())
 	Delete(ctx context.Context, id string) error
 
 	// Paginate retrieves entities with pagination
@@ -236,4 +255,3 @@ func (qb *QueryBuilder[T]) ToPaginationOptions() PaginationOptions {
 
 	return opts
 }
-

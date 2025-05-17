@@ -26,8 +26,24 @@ func (g *CurlGenerator) GenerateCurl(endpoint *Endpoint) (string, error) {
 	// Add the HTTP method
 	buf.WriteString(fmt.Sprintf(" -X %s", endpoint.Method))
 
-	// Add URL
+	// Build URL with query parameters
 	fullPath := g.BaseURL + endpoint.Path
+
+	// Add query parameters if they exist
+	if len(endpoint.QueryParams) > 0 {
+		queryParams := []string{}
+		for _, param := range endpoint.QueryParams {
+			var value string
+			if param.Default != nil {
+				value = fmt.Sprintf("%v", param.Default)
+			} else {
+				value = fmt.Sprintf("<%s>", strings.ToUpper(param.Name))
+			}
+			queryParams = append(queryParams, fmt.Sprintf("%s=%s", param.Name, value))
+		}
+		fullPath += "?" + strings.Join(queryParams, "&")
+	}
+
 	buf.WriteString(fmt.Sprintf(" \"%s\"", fullPath))
 
 	// Add headers
@@ -61,8 +77,6 @@ func (g *CurlGenerator) GenerateCurl(endpoint *Endpoint) (string, error) {
 			in := endpoint.AuthDetails["in"]
 			if in == "header" {
 				buf.WriteString(fmt.Sprintf(" -H \"%s: %s\"", name, value))
-			} else if in == "query" {
-				// Will be handled in the URL construction
 			}
 		}
 	}

@@ -594,8 +594,25 @@ func buildFilterSQL(filter Filter, startParamIndex int) (string, []interface{}, 
 			continue
 		}
 
-		clauses = append(clauses, fmt.Sprintf("metadata->>'%s' = $%d", field, paramIndex))
-		params = append(params, fmt.Sprintf("%v", value))
+		// Handle different value types appropriately
+		switch v := value.(type) {
+		case int, int32, int64, float32, float64:
+			// For numeric values, cast the JSON text to numeric
+			clauses = append(clauses, fmt.Sprintf("(metadata->>'%s')::numeric = $%d", field, paramIndex))
+			params = append(params, v)
+		case bool:
+			// For boolean values
+			clauses = append(clauses, fmt.Sprintf("metadata->>'%s' = $%d", field, paramIndex))
+			params = append(params, fmt.Sprintf("%t", v))
+		case string:
+			// For string values, direct comparison
+			clauses = append(clauses, fmt.Sprintf("metadata->>'%s' = $%d", field, paramIndex))
+			params = append(params, v)
+		default:
+			// For any other type, convert to string
+			clauses = append(clauses, fmt.Sprintf("metadata->>'%s' = $%d", field, paramIndex))
+			params = append(params, fmt.Sprintf("%v", v))
+		}
 		paramIndex++
 	}
 
@@ -611,34 +628,67 @@ func buildComparisonSQL(field, op string, value interface{}, paramIndex int) (st
 	var clause string
 	var params []interface{}
 
+	// Handle numeric operations specially
+	isNumeric := false
+	switch value.(type) {
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+		isNumeric = true
+	}
+
 	switch op {
 	case "eq":
-		clause = fmt.Sprintf("metadata->>'%s' = $%d", field, paramIndex)
-		params = []interface{}{fmt.Sprintf("%v", value)}
+		if isNumeric {
+			clause = fmt.Sprintf("(metadata->>'%s')::numeric = $%d", field, paramIndex)
+			params = []interface{}{value}
+		} else {
+			clause = fmt.Sprintf("metadata->>'%s' = $%d", field, paramIndex)
+			params = []interface{}{fmt.Sprintf("%v", value)}
+		}
 	case "neq":
-		clause = fmt.Sprintf("metadata->>'%s' != $%d", field, paramIndex)
-		params = []interface{}{fmt.Sprintf("%v", value)}
+		if isNumeric {
+			clause = fmt.Sprintf("(metadata->>'%s')::numeric != $%d", field, paramIndex)
+			params = []interface{}{value}
+		} else {
+			clause = fmt.Sprintf("metadata->>'%s' != $%d", field, paramIndex)
+			params = []interface{}{fmt.Sprintf("%v", value)}
+		}
 	case "gt":
-		clause = fmt.Sprintf("(metadata->>'%s')::float > $%d", field, paramIndex)
+		clause = fmt.Sprintf("(metadata->>'%s')::numeric > $%d", field, paramIndex)
 		params = []interface{}{value}
 	case "gte":
-		clause = fmt.Sprintf("(metadata->>'%s')::float >= $%d", field, paramIndex)
+		clause = fmt.Sprintf("(metadata->>'%s')::numeric >= $%d", field, paramIndex)
 		params = []interface{}{value}
 	case "lt":
-		clause = fmt.Sprintf("(metadata->>'%s')::float < $%d", field, paramIndex)
+		clause = fmt.Sprintf("(metadata->>'%s')::numeric < $%d", field, paramIndex)
 		params = []interface{}{value}
 	case "lte":
-		clause = fmt.Sprintf("(metadata->>'%s')::float <= $%d", field, paramIndex)
+		clause = fmt.Sprintf("(metadata->>'%s')::numeric <= $%d", field, paramIndex)
 		params = []interface{}{value}
 	case "in":
 		if values, ok := value.([]interface{}); ok {
 			placeholders := make([]string, len(values))
 			params = make([]interface{}, len(values))
+
 			for i, v := range values {
 				placeholders[i] = fmt.Sprintf("$%d", paramIndex+i)
-				params[i] = fmt.Sprintf("%v", v)
+
+				// Handle numeric values in lists
+				if _, isNum := v.(float64); isNum || v == nil {
+					if isNumeric {
+						params[i] = v // Keep as numeric
+					} else {
+						params[i] = fmt.Sprintf("%v", v) // Convert to string
+					}
+				} else {
+					params[i] = fmt.Sprintf("%v", v)
+				}
 			}
-			clause = fmt.Sprintf("metadata->>'%s' IN (%s)", field, strings.Join(placeholders, ", "))
+
+			if isNumeric {
+				clause = fmt.Sprintf("(metadata->>'%s')::numeric IN (%s)", field, strings.Join(placeholders, ", "))
+			} else {
+				clause = fmt.Sprintf("metadata->>'%s' IN (%s)", field, strings.Join(placeholders, ", "))
+			}
 		} else {
 			return "", nil, errRegistry.New(ErrCodeInvalidFilter).WithDetail("reason", "invalid value for IN operator")
 		}
@@ -646,11 +696,27 @@ func buildComparisonSQL(field, op string, value interface{}, paramIndex int) (st
 		if values, ok := value.([]interface{}); ok {
 			placeholders := make([]string, len(values))
 			params = make([]interface{}, len(values))
+
 			for i, v := range values {
 				placeholders[i] = fmt.Sprintf("$%d", paramIndex+i)
-				params[i] = fmt.Sprintf("%v", v)
+
+				// Handle numeric values in lists
+				if _, isNum := v.(float64); isNum || v == nil {
+					if isNumeric {
+						params[i] = v // Keep as numeric
+					} else {
+						params[i] = fmt.Sprintf("%v", v) // Convert to string
+					}
+				} else {
+					params[i] = fmt.Sprintf("%v", v)
+				}
 			}
-			clause = fmt.Sprintf("metadata->>'%s' NOT IN (%s)", field, strings.Join(placeholders, ", "))
+
+			if isNumeric {
+				clause = fmt.Sprintf("(metadata->>'%s')::numeric NOT IN (%s)", field, strings.Join(placeholders, ", "))
+			} else {
+				clause = fmt.Sprintf("metadata->>'%s' NOT IN (%s)", field, strings.Join(placeholders, ", "))
+			}
 		} else {
 			return "", nil, errRegistry.New(ErrCodeInvalidFilter).WithDetail("reason", "invalid value for NOT IN operator")
 		}
@@ -932,4 +998,3 @@ func (s *PGVectorStore) Features() map[string]bool {
 		"exact_match": true,
 	}
 }
-

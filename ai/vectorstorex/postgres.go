@@ -416,6 +416,8 @@ func (s *PGVectorStore) SimilaritySearch(ctx context.Context, vector []float32, 
 			args = append(args, whereArgs...)
 			paramCounter += len(whereArgs)
 		}
+
+		fmt.Println("Query parts after filter:", queryParts)
 	}
 
 	// Apply score threshold
@@ -434,6 +436,8 @@ func (s *PGVectorStore) SimilaritySearch(ctx context.Context, vector []float32, 
 
 	// Combine everything
 	query := strings.Join(queryParts, " ")
+
+	fmt.Println("Final query:", query)
 
 	// Count total matching records (without pagination)
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s", s.options.TableName)

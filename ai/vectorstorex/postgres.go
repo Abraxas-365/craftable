@@ -417,16 +417,17 @@ func (s *PGVectorStore) SimilaritySearch(ctx context.Context, vector []float32, 
 			paramCounter += len(whereArgs)
 		}
 
-		fmt.Println("Query parts after filter:", queryParts)
 	}
 
 	// Apply score threshold
 	if scoreThreshold > 0 {
 		whereClause := fmt.Sprintf("%s >= %f", distanceExpr, scoreThreshold)
 		if len(queryParts) == 1 {
+			// No existing WHERE clause, add one
 			queryParts = append(queryParts, "WHERE "+whereClause)
 		} else {
-			queryParts = append(queryParts[:2], append([]string{queryParts[1] + " AND " + whereClause}, queryParts[2:]...)...)
+			// WHERE clause already exists, add with AND
+			queryParts[1] = queryParts[1] + " AND " + whereClause
 		}
 	}
 
@@ -436,9 +437,6 @@ func (s *PGVectorStore) SimilaritySearch(ctx context.Context, vector []float32, 
 
 	// Combine everything
 	query := strings.Join(queryParts, " ")
-
-	fmt.Println("Final query:", query)
-	fmt.Println("Args:", args)
 
 	// Count total matching records (without pagination)
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s", s.options.TableName)

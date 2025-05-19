@@ -438,6 +438,7 @@ func (s *PGVectorStore) SimilaritySearch(ctx context.Context, vector []float32, 
 	query := strings.Join(queryParts, " ")
 
 	fmt.Println("Final query:", query)
+	fmt.Println("Args:", args)
 
 	// Count total matching records (without pagination)
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s", s.options.TableName)

@@ -104,6 +104,33 @@ func WithHeader(key, value string) Option {
 	}
 }
 
+func WithPresencePenalty(penalty float32) Option {
+	return func(o *ChatOptions) {
+		o.PresencePenalty = penalty
+	}
+}
+
+// WithFrequencyPenalty sets the frequency penalty
+func WithFrequencyPenalty(penalty float32) Option {
+	return func(o *ChatOptions) {
+		o.FrequencyPenalty = penalty
+	}
+}
+
+// WithSeed sets the random seed
+func WithSeed(seed int64) Option {
+	return func(o *ChatOptions) {
+		o.Seed = seed
+	}
+}
+
+// WithUser sets the user identifier
+func WithUser(user string) Option {
+	return func(o *ChatOptions) {
+		o.User = user
+	}
+}
+
 // DefaultOptions returns the default options
 func DefaultOptions() *ChatOptions {
 	return &ChatOptions{

@@ -37,9 +37,9 @@ func WithTools(tools *toolx.ToolxClient) AgentOption {
 }
 
 // New creates a new agent
-func New(client *llm.Client, memory memoryx.Memory, opts ...AgentOption) *Agent {
+func New(client llm.Client, memory memoryx.Memory, opts ...AgentOption) *Agent {
 	agent := &Agent{
-		client: client,
+		client: &client,
 		memory: memory,
 	}
 

@@ -424,17 +424,16 @@ func (a *Agent) evaluateToolCalls(ctx context.Context, toolCalls []llm.ToolCall)
 // Types for evaluation
 
 type AgentEvaluation struct {
-	UserInput     string
-	Steps         []AgentStep
-	FinalResponse string
-	TotalTokens   int
+	UserInput     string      `json:"user_input"`
+	Steps         []AgentStep `json:"steps"`
+	FinalResponse string      `json:"final_response"`
 }
 
 type AgentStep struct {
-	StepType      string         // "initial", "tool_execution", "response"
-	InputMessages []llm.Message  // Messages sent to the LLM
-	OutputMessage llm.Message    // Response from the LLM
-	ToolCalls     []llm.ToolCall // Tool calls made
-	ToolResponses []llm.Message  // Responses from tools
-	TokenUsage    llm.Usage      // Token usage for this step
+	StepType      string         `json:"step_type"`      // "initial", "tool_execution", "response"
+	InputMessages []llm.Message  `json:"input_message"`  // Messages sent to the LLM
+	OutputMessage llm.Message    `json:"output_message"` // Response from the LLM
+	ToolCalls     []llm.ToolCall `json:"tool_calls"`     // Tool calls made
+	ToolResponses []llm.Message  `json:"tool_responses"` // Responses from the tools
+	TokenUsage    llm.Usage      `json:"token_usage"`    // Token usage information
 }

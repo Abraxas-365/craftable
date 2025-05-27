@@ -57,7 +57,7 @@ type LLMCheckConfig struct {
 type Rule struct {
 	Name        string
 	Type        RuleType
-	Pattern     interface{}
+	Pattern     any
 	Direction   Direction
 	Action      ActionType
 	Replacement string
@@ -607,4 +607,3 @@ func (a *GuardedAgent) Run(ctx context.Context, userInput string) (string, error
 
 	return response, nil
 }
-

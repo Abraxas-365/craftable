@@ -37,7 +37,7 @@ func main() {
 
 	// Create the agent
 	myAgent := agentx.New(
-		llmClient,
+		*llmClient,
 		mem,
 		agentx.WithTools(tools),
 		agentx.WithOptions(
@@ -170,10 +170,10 @@ func (w *WeatherTool) GetTool() llm.Tool {
 		Function: llm.Function{
 			Name:        w.Name(),
 			Description: "Get the current weather in a location",
-			Parameters: map[string]interface{}{
+			Parameters: map[string]any{
 				"type": "object",
-				"properties": map[string]interface{}{
-					"location": map[string]interface{}{
+				"properties": map[string]any{
+					"location": map[string]any{
 						"type":        "string",
 						"description": "The city name, e.g. New York",
 					},
@@ -195,4 +195,3 @@ func (w *WeatherTool) Call(ctx context.Context, inputs string) (any, error) {
 	weatherData := fmt.Sprintf("Currently 22°C and partly cloudy in %s.", request.Location)
 	return weatherData, nil
 }
-

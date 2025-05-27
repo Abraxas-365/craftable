@@ -339,7 +339,7 @@ func convertToOpenAITools(tools []llm.Tool, functions []llm.Function) []openai.C
 		if tool.Type == "function" {
 			// Create JSON parameters
 			paramsJSON, _ := json.Marshal(tool.Function.Parameters)
-			var parametersMap map[string]interface{}
+			var parametersMap map[string]any
 			_ = json.Unmarshal(paramsJSON, &parametersMap)
 
 			result = append(result, openai.ChatCompletionToolParam{
@@ -357,7 +357,7 @@ func convertToOpenAITools(tools []llm.Tool, functions []llm.Function) []openai.C
 	for _, fn := range functions {
 		// Create JSON parameters
 		paramsJSON, _ := json.Marshal(fn.Parameters)
-		var parametersMap map[string]interface{}
+		var parametersMap map[string]any
 		_ = json.Unmarshal(paramsJSON, &parametersMap)
 
 		result = append(result, openai.ChatCompletionToolParam{
@@ -373,7 +373,7 @@ func convertToOpenAITools(tools []llm.Tool, functions []llm.Function) []openai.C
 	return result
 }
 
-func convertToOpenAIToolChoice(toolChoice interface{}) openai.ChatCompletionToolChoiceOptionUnionParam {
+func convertToOpenAIToolChoice(toolChoice any) openai.ChatCompletionToolChoiceOptionUnionParam {
 	// Handle string choices like "auto" or "none"
 	if strChoice, ok := toolChoice.(string); ok {
 		if strChoice == "auto" {
@@ -388,8 +388,8 @@ func convertToOpenAIToolChoice(toolChoice interface{}) openai.ChatCompletionTool
 	}
 
 	// Handle map for specific function choice
-	if mapChoice, ok := toolChoice.(map[string]interface{}); ok {
-		if funcNameMap, ok := mapChoice["function"].(map[string]interface{}); ok {
+	if mapChoice, ok := toolChoice.(map[string]any); ok {
+		if funcNameMap, ok := mapChoice["function"].(map[string]any); ok {
 			if name, ok := funcNameMap["name"].(string); ok {
 				return openai.ChatCompletionToolChoiceOptionUnionParam{
 					OfChatCompletionNamedToolChoice: &openai.ChatCompletionNamedToolChoiceParam{
@@ -422,11 +422,11 @@ func convertToResponseFormatParam(format *llm.ResponseFormat) openai.ChatComplet
 			OfJSONObject: &shared.ResponseFormatJSONObjectParam{},
 		}
 	case llm.JSONSchema:
-		schema, ok := format.JSONSchema.(map[string]interface{})
+		schema, ok := format.JSONSchema.(map[string]any)
 		if !ok {
 			// Try to convert to map if it's not already
 			schemaBytes, _ := json.Marshal(format.JSONSchema)
-			var schemaMap map[string]interface{}
+			var schemaMap map[string]any
 			if err := json.Unmarshal(schemaBytes, &schemaMap); err == nil {
 				schema = schemaMap
 			} else {

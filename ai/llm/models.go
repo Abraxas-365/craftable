@@ -11,13 +11,13 @@ const (
 
 // Message represents a chat message
 type Message struct {
-	Role         string                 `json:"role"`
-	Content      string                 `json:"content,omitempty"`
-	Name         string                 `json:"name,omitempty"`
-	FunctionCall *FunctionCall          `json:"function_call,omitempty"`
-	ToolCalls    []ToolCall             `json:"tool_calls,omitempty"`
-	ToolCallID   string                 `json:"tool_call_id,omitempty"`
-	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+	Role         string         `json:"role"`
+	Content      string         `json:"content,omitempty"`
+	Name         string         `json:"name,omitempty"`
+	FunctionCall *FunctionCall  `json:"function_call,omitempty"`
+	ToolCalls    []ToolCall     `json:"tool_calls,omitempty"`
+	ToolCallID   string         `json:"tool_call_id,omitempty"`
+	Metadata     map[string]any `json:"metadata,omitempty"`
 }
 
 // Usage represents token usage statistics
@@ -35,9 +35,9 @@ type FunctionCall struct {
 
 // Function describes a callable function
 type Function struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	Parameters  interface{} `json:"parameters"` // JSON Schema object
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Parameters  any    `json:"parameters"` // JSON Schema object
 }
 
 // ToolCall represents a tool call
@@ -110,7 +110,7 @@ const (
 // ResponseFormat specifies the desired output format
 type ResponseFormat struct {
 	Type       ResponseFormatType `json:"type"`
-	JSONSchema interface{}        `json:"schema,omitempty"` // Optional JSON schema for JSONSchema type
+	JSONSchema any                `json:"schema,omitempty"` // Optional JSON schema for JSONSchema type
 }
 
 // WithResponseFormat specifies the output format
@@ -130,7 +130,7 @@ func WithJSONResponseFormat() Option {
 }
 
 // WithJSONSchemaResponseFormat sets the response format to conform to a specific JSON schema
-func WithJSONSchemaResponseFormat(schema interface{}) Option {
+func WithJSONSchemaResponseFormat(schema any) Option {
 	return func(o *ChatOptions) {
 		o.ResponseFormat = &ResponseFormat{
 			Type:       JSONSchema,

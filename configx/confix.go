@@ -18,13 +18,13 @@ type Config interface {
 	Get(key string) Value
 
 	// Set sets a configuration value
-	Set(key string, val interface{})
+	Set(key string, val any)
 
 	// Has checks if a configuration key exists
 	Has(key string) bool
 
 	// AllSettings returns all settings as a map
-	AllSettings() map[string]interface{}
+	AllSettings() map[string]any
 
 	// AddSource adds a configuration source
 	AddSource(source Source) Config
@@ -39,7 +39,7 @@ type Config interface {
 // Source represents a configuration source
 type Source interface {
 	// Load loads configuration values from the source
-	Load() (map[string]interface{}, error)
+	Load() (map[string]any, error)
 
 	// Name returns the name of the source
 	Name() string
@@ -96,7 +96,7 @@ type Value interface {
 	AsMap() map[string]Value
 
 	// AsStruct unmarshals the value into a struct
-	AsStruct(target interface{}) error
+	AsStruct(target any) error
 }
 
 // Option is a function that configures a configuration
@@ -112,10 +112,10 @@ type Builder interface {
 	FromEnv(prefix string) Builder
 
 	// FromMap adds a map source
-	FromMap(values map[string]interface{}, name string) Builder
+	FromMap(values map[string]any, name string) Builder
 
 	// WithDefaults adds default values
-	WithDefaults(defaults map[string]interface{}) Builder
+	WithDefaults(defaults map[string]any) Builder
 
 	// WithAutoReload enables automatic reloading of configuration
 	WithAutoReload(interval time.Duration) Builder
@@ -124,7 +124,7 @@ type Builder interface {
 	WithValidation(validator func(config Config) error) Builder
 
 	// WithOnChange registers a function to be called when a configuration value changes
-	WithOnChange(hook func(key string, value interface{})) Builder
+	WithOnChange(hook func(key string, value any)) Builder
 
 	// RequireEnv specifies environment variables that must be present
 	RequireEnv(envVars ...string) Builder
@@ -140,24 +140,24 @@ type Builder interface {
 // configuration is the concrete implementation of Config
 type configuration struct {
 	sync.RWMutex
-	values        map[string]interface{}
+	values        map[string]any
 	sources       []Source
 	isAutoReload  bool
 	reloadSignal  chan struct{}
 	reloadStop    chan struct{}
 	reloadTimer   *time.Timer
-	onChangeHooks []func(key string, value interface{})
+	onChangeHooks []func(key string, value any)
 	requiredEnvs  []string
 }
 
 // New creates a new Config instance
 func New(opts ...Option) (Config, error) {
 	cfg := &configuration{
-		values:        make(map[string]interface{}),
+		values:        make(map[string]any),
 		sources:       make([]Source, 0),
 		reloadSignal:  make(chan struct{}, 1),
 		reloadStop:    make(chan struct{}),
-		onChangeHooks: make([]func(key string, value interface{}), 0),
+		onChangeHooks: make([]func(key string, value any), 0),
 		requiredEnvs:  make([]string, 0),
 	}
 
@@ -187,7 +187,7 @@ func (c *configuration) Get(key string) Value {
 }
 
 // findValue searches for a key in the configuration, supporting nested keys with dot notation
-func (c *configuration) findValue(key string) interface{} {
+func (c *configuration) findValue(key string) any {
 	parts := strings.Split(key, ".")
 	current := c.values
 
@@ -197,7 +197,7 @@ func (c *configuration) findValue(key string) interface{} {
 				return v
 			}
 
-			if m, ok := v.(map[string]interface{}); ok {
+			if m, ok := v.(map[string]any); ok {
 				current = m
 			} else {
 				return nil
@@ -211,7 +211,7 @@ func (c *configuration) findValue(key string) interface{} {
 }
 
 // Set sets a configuration value
-func (c *configuration) Set(key string, val interface{}) {
+func (c *configuration) Set(key string, val any) {
 	c.Lock()
 	defer c.Unlock()
 
@@ -231,14 +231,14 @@ func (c *configuration) Set(key string, val interface{}) {
 		}
 
 		if _, ok := current[part]; !ok {
-			current[part] = make(map[string]interface{})
+			current[part] = make(map[string]any)
 		}
 
-		if m, ok := current[part].(map[string]interface{}); ok {
+		if m, ok := current[part].(map[string]any); ok {
 			current = m
 		} else {
 			// Cannot navigate further, overwrite with a new map
-			newMap := make(map[string]interface{})
+			newMap := make(map[string]any)
 			current[part] = newMap
 			current = newMap
 		}
@@ -254,7 +254,7 @@ func (c *configuration) Has(key string) bool {
 }
 
 // AllSettings returns all settings as a map
-func (c *configuration) AllSettings() map[string]interface{} {
+func (c *configuration) AllSettings() map[string]any {
 	c.RLock()
 	defer c.RUnlock()
 
@@ -263,14 +263,14 @@ func (c *configuration) AllSettings() map[string]interface{} {
 }
 
 // deepCopyMap creates a deep copy of a map
-func deepCopyMap(m map[string]interface{}) map[string]interface{} {
-	result := make(map[string]interface{}, len(m))
+func deepCopyMap(m map[string]any) map[string]any {
+	result := make(map[string]any, len(m))
 
 	for k, v := range m {
 		switch val := v.(type) {
-		case map[string]interface{}:
+		case map[string]any:
 			result[k] = deepCopyMap(val)
-		case []interface{}:
+		case []any:
 			result[k] = deepCopySlice(val)
 		default:
 			result[k] = val
@@ -281,14 +281,14 @@ func deepCopyMap(m map[string]interface{}) map[string]interface{} {
 }
 
 // deepCopySlice creates a deep copy of a slice
-func deepCopySlice(s []interface{}) []interface{} {
-	result := make([]interface{}, len(s))
+func deepCopySlice(s []any) []any {
+	result := make([]any, len(s))
 
 	for i, v := range s {
 		switch val := v.(type) {
-		case map[string]interface{}:
+		case map[string]any:
 			result[i] = deepCopyMap(val)
-		case []interface{}:
+		case []any:
 			result[i] = deepCopySlice(val)
 		default:
 			result[i] = val
@@ -329,12 +329,12 @@ func sortSourcesByPriority(sources []Source) {
 }
 
 // mergeMap merges a map of values into the configuration
-func (c *configuration) mergeMap(data map[string]interface{}) {
+func (c *configuration) mergeMap(data map[string]any) {
 	for k, v := range data {
-		if m, ok := v.(map[string]interface{}); ok {
+		if m, ok := v.(map[string]any); ok {
 			// Handle nested maps
 			if existing, ok := c.values[k]; ok {
-				if existingMap, ok := existing.(map[string]interface{}); ok {
+				if existingMap, ok := existing.(map[string]any); ok {
 					// If both are maps, merge them
 					merged := deepCopyMap(existingMap)
 					mergeMapRecursive(merged, m)
@@ -350,12 +350,12 @@ func (c *configuration) mergeMap(data map[string]interface{}) {
 }
 
 // mergeMapRecursive recursively merges maps
-func mergeMapRecursive(dst, src map[string]interface{}) {
+func mergeMapRecursive(dst, src map[string]any) {
 	for k, v := range src {
-		if srcMap, ok := v.(map[string]interface{}); ok {
+		if srcMap, ok := v.(map[string]any); ok {
 			// If it's a map, merge recursively
 			if dstVal, ok := dst[k]; ok {
-				if dstMap, ok := dstVal.(map[string]interface{}); ok {
+				if dstMap, ok := dstVal.(map[string]any); ok {
 					// Both are maps, merge them
 					mergeMapRecursive(dstMap, srcMap)
 					continue
@@ -377,7 +377,7 @@ func (c *configuration) LoadAll() error {
 	defer c.Unlock()
 
 	// Create a new values map
-	newValues := make(map[string]interface{})
+	newValues := make(map[string]any)
 
 	// Load each source in order of priority
 	for _, source := range c.sources {
@@ -388,10 +388,10 @@ func (c *configuration) LoadAll() error {
 
 		// Merge into new values
 		for k, v := range data {
-			if m, ok := v.(map[string]interface{}); ok {
+			if m, ok := v.(map[string]any); ok {
 				// Handle nested maps
 				if existing, ok := newValues[k]; ok {
-					if existingMap, ok := existing.(map[string]interface{}); ok {
+					if existingMap, ok := existing.(map[string]any); ok {
 						// If both are maps, merge them
 						merged := deepCopyMap(existingMap)
 						mergeMapRecursive(merged, m)
@@ -407,7 +407,7 @@ func (c *configuration) LoadAll() error {
 	}
 
 	// Find changed values for hooks
-	changedKeys := make(map[string]interface{})
+	changedKeys := make(map[string]any)
 	collectChangedKeys("", c.values, newValues, changedKeys)
 
 	// Update values
@@ -424,7 +424,7 @@ func (c *configuration) LoadAll() error {
 }
 
 // collectChangedKeys recursively collects keys that have changed between two maps
-func collectChangedKeys(prefix string, oldMap, newMap map[string]interface{}, changedKeys map[string]interface{}) {
+func collectChangedKeys(prefix string, oldMap, newMap map[string]any, changedKeys map[string]any) {
 	// Check keys in newMap
 	for k, newVal := range newMap {
 		key := k
@@ -436,8 +436,8 @@ func collectChangedKeys(prefix string, oldMap, newMap map[string]interface{}, ch
 			// Key doesn't exist in old map
 			changedKeys[key] = newVal
 		} else if !reflect.DeepEqual(oldVal, newVal) {
-			if oldMap, ok := oldVal.(map[string]interface{}); ok {
-				if newMap, ok := newVal.(map[string]interface{}); ok {
+			if oldMap, ok := oldVal.(map[string]any); ok {
+				if newMap, ok := newVal.(map[string]any); ok {
 					// Both are maps, check recursively
 					collectChangedKeys(key, oldMap, newMap, changedKeys)
 					continue
@@ -500,11 +500,11 @@ func (c *configuration) RequireEnv(envVars ...string) error {
 // value implements the Value interface
 type value struct {
 	key string
-	val interface{}
+	val any
 }
 
 // newValue creates a new Value instance
-func newValue(key string, val interface{}) Value {
+func newValue(key string, val any) Value {
 	return &value{
 		key: key,
 		val: val,
@@ -668,7 +668,7 @@ func (v *value) AsSlice() []Value {
 	}
 
 	switch val := v.val.(type) {
-	case []interface{}:
+	case []any:
 		result := make([]Value, len(val))
 		for i, item := range val {
 			result[i] = newValue(fmt.Sprintf("%s[%d]", v.key, i), item)
@@ -710,7 +710,7 @@ func (v *value) AsMap() map[string]Value {
 	}
 
 	switch val := v.val.(type) {
-	case map[string]interface{}:
+	case map[string]any:
 		result := make(map[string]Value, len(val))
 		for k, item := range val {
 			// Use v.key (from the outer struct) and k (from the loop)
@@ -723,7 +723,7 @@ func (v *value) AsMap() map[string]Value {
 }
 
 // AsStruct unmarshals the value into a struct
-func (v *value) AsStruct(target interface{}) error {
+func (v *value) AsStruct(target any) error {
 	if !v.IsSet() {
 		return fmt.Errorf("value not set")
 	}
@@ -784,13 +784,13 @@ func (b *builder) FromDotEnv(path string) Builder {
 }
 
 // FromMap adds a map source
-func (b *builder) FromMap(values map[string]interface{}, name string) Builder {
+func (b *builder) FromMap(values map[string]any, name string) Builder {
 	b.options = append(b.options, WithMap(values, name, PriorityMap))
 	return b
 }
 
 // WithDefaults adds default values
-func (b *builder) WithDefaults(defaults map[string]interface{}) Builder {
+func (b *builder) WithDefaults(defaults map[string]any) Builder {
 	b.options = append(b.options, WithMap(defaults, "defaults", PriorityDefault))
 	return b
 }
@@ -808,7 +808,7 @@ func (b *builder) WithValidation(validator func(config Config) error) Builder {
 }
 
 // WithOnChange registers a function to be called when a configuration value changes
-func (b *builder) WithOnChange(hook func(key string, value interface{})) Builder {
+func (b *builder) WithOnChange(hook func(key string, value any)) Builder {
 	b.options = append(b.options, WithOnChange(hook))
 	return b
 }
@@ -872,7 +872,7 @@ func WithEnv(prefix string, priority int) Option {
 }
 
 // WithMap adds a map source
-func WithMap(values map[string]interface{}, name string, priority int) Option {
+func WithMap(values map[string]any, name string, priority int) Option {
 	return func(c *configuration) {
 		// This would normally call NewMapSource, which would be in sources.go
 		//TODO
@@ -881,7 +881,7 @@ func WithMap(values map[string]interface{}, name string, priority int) Option {
 }
 
 // WithDefaults adds default values
-func WithDefaults(defaults map[string]interface{}) Option {
+func WithDefaults(defaults map[string]any) Option {
 	return WithMap(defaults, "defaults", 0)
 }
 
@@ -918,7 +918,7 @@ func WithAutoReload(interval time.Duration) Option {
 }
 
 // WithOnChange registers a function to be called when a configuration value changes
-func WithOnChange(hook func(key string, value interface{})) Option {
+func WithOnChange(hook func(key string, value any)) Option {
 	return func(c *configuration) {
 		c.onChangeHooks = append(c.onChangeHooks, hook)
 	}
@@ -928,7 +928,7 @@ func WithOnChange(hook func(key string, value interface{})) Option {
 func WithValidation(validator func(config Config) error) Option {
 	return func(c *configuration) {
 		// Add a hook to validate after loading
-		c.onChangeHooks = append(c.onChangeHooks, func(key string, value interface{}) {
+		c.onChangeHooks = append(c.onChangeHooks, func(key string, value any) {
 			if err := validator(c); err != nil {
 				// Log validation error
 				fmt.Fprintf(os.Stderr, "Configuration validation error: %s\n", err)

@@ -66,7 +66,7 @@ func main() {
 
 	// Get webhook configuration
 	webhookPort := config.Get("webhook.port").AsInt()
-	baseURL := config.Get("webhook.base_url").AsString()
+	baseURL := config.Get("webhook.base.url").AsString()
 	debug := config.Get("debug").AsBool()
 
 	if debug {
@@ -237,7 +237,7 @@ func demonstrateMessaging(ctx context.Context, service *msgx.Service, phoneNumbe
 	}
 
 	// 5. Send bulk messages with configurable count
-	bulkCount := config.Get("example.bulk_count").AsIntDefault(2)
+	bulkCount := config.Get("example.bulk.count").AsIntDefault(2)
 	bulkMessages := make([]msgx.Message, bulkCount)
 
 	for i := 0; i < bulkCount; i++ {
@@ -273,7 +273,7 @@ func demonstrateMessaging(ctx context.Context, service *msgx.Service, phoneNumbe
 // handleIncomingMessage processes incoming messages from webhooks
 func handleIncomingMessage(ctx context.Context, message *msgx.IncomingMessage, config configx.Config) error {
 	debug := config.Get("debug").AsBool()
-	autoReply := config.Get("webhook.auto_reply").AsBoolDefault(true)
+	autoReply := config.Get("webhook.auto.reply").AsBoolDefault(true)
 
 	if debug {
 		log.Printf("Received message from %s (Provider: %s, Type: %s)",
@@ -287,7 +287,7 @@ func handleIncomingMessage(ctx context.Context, message *msgx.IncomingMessage, c
 
 			// Auto-reply if enabled in config
 			if autoReply {
-				replyPrefix := config.Get("webhook.reply_prefix").AsStringDefault("Echo")
+				replyPrefix := config.Get("webhook.reply.prefix").AsStringDefault("Echo")
 				log.Printf("Would auto-reply with: %s: %s", replyPrefix, message.Content.Text.Body)
 			}
 		}
@@ -335,7 +335,7 @@ func handleIncomingMessage(ctx context.Context, message *msgx.IncomingMessage, c
 }
 
 func setupHealthCheck(service *msgx.Service, config configx.Config) {
-	healthPath := config.Get("webhook.health_path").AsStringDefault("/health")
+	healthPath := config.Get("webhook.health.path").AsStringDefault("/health")
 
 	http.HandleFunc(healthPath, func(w http.ResponseWriter, r *http.Request) {
 		// Check if the service is healthy
@@ -359,47 +359,4 @@ func setupHealthCheck(service *msgx.Service, config configx.Config) {
 
 func getEnvironment(config configx.Config) string {
 	return config.Get("app.environment").AsStringDefault("development")
-}
-
-// Configuration validation helper
-func validateConfig(config configx.Config) error {
-	required := []string{
-		"whatsapp.phone_number_id",
-		"whatsapp.access_token",
-	}
-
-	for _, key := range required {
-		if config.Get(key).AsString() == "" {
-			return fmt.Errorf("required configuration key missing: %s", key)
-		}
-	}
-
-	return nil
-}
-
-// Additional configuration helpers for production use
-func loadAdditionalConfig() map[string]any {
-	return map[string]any{
-		"app": map[string]any{
-			"name":        "msgx-demo",
-			"version":     "1.0.0",
-			"environment": "development",
-		},
-		"whatsapp": map[string]any{
-			"template": map[string]any{
-				"name":     "hello_world",
-				"language": "en_US",
-			},
-		},
-		"webhook": map[string]any{
-			"auto_reply":   true,
-			"reply_prefix": "Bot",
-			"health_path":  "/health",
-		},
-		"example": map[string]any{
-			"bulk_count":   2,
-			"image_url":    "https://picsum.photos/800/600",
-			"document_url": "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
-		},
-	}
 }

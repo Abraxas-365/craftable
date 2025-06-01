@@ -1,4 +1,4 @@
-package ptr
+package ptrx
 
 import (
 	"time"
@@ -495,4 +495,304 @@ func DurationMap(vs map[string]time.Duration) map[string]*time.Duration {
 	}
 
 	return ps
+}
+
+func BoolValue(v *bool) bool {
+	if v != nil {
+		return *v
+	}
+	return false
+}
+
+// BoolValueOr returns the value of the bool pointer passed in or the default value if the pointer is nil.
+func BoolValueOr(v *bool, def bool) bool {
+	if v != nil {
+		return *v
+	}
+	return def
+}
+
+// ByteValue returns the value of the byte pointer passed in or 0 if the pointer is nil.
+func ByteValue(v *byte) byte {
+	if v != nil {
+		return *v
+	}
+	return 0
+}
+
+// ByteValueOr returns the value of the byte pointer passed in or the default value if the pointer is nil.
+func ByteValueOr(v *byte, def byte) byte {
+	if v != nil {
+		return *v
+	}
+	return def
+}
+
+// StringValue returns the value of the string pointer passed in or empty string if the pointer is nil.
+func StringValue(v *string) string {
+	if v != nil {
+		return *v
+	}
+	return ""
+}
+
+// StringValueOr returns the value of the string pointer passed in or the default value if the pointer is nil.
+func StringValueOr(v *string, def string) string {
+	if v != nil {
+		return *v
+	}
+	return def
+}
+
+// IntValue returns the value of the int pointer passed in or 0 if the pointer is nil.
+func IntValue(v *int) int {
+	if v != nil {
+		return *v
+	}
+	return 0
+}
+
+// IntValueOr returns the value of the int pointer passed in or the default value if the pointer is nil.
+func IntValueOr(v *int, def int) int {
+	if v != nil {
+		return *v
+	}
+	return def
+}
+
+// Int8Value returns the value of the int8 pointer passed in or 0 if the pointer is nil.
+func Int8Value(v *int8) int8 {
+	if v != nil {
+		return *v
+	}
+	return 0
+}
+
+// Int8ValueOr returns the value of the int8 pointer passed in or the default value if the pointer is nil.
+func Int8ValueOr(v *int8, def int8) int8 {
+	if v != nil {
+		return *v
+	}
+	return def
+}
+
+// Int16Value returns the value of the int16 pointer passed in or 0 if the pointer is nil.
+func Int16Value(v *int16) int16 {
+	if v != nil {
+		return *v
+	}
+	return 0
+}
+
+// Int16ValueOr returns the value of the int16 pointer passed in or the default value if the pointer is nil.
+func Int16ValueOr(v *int16, def int16) int16 {
+	if v != nil {
+		return *v
+	}
+	return def
+}
+
+// Int32Value returns the value of the int32 pointer passed in or 0 if the pointer is nil.
+func Int32Value(v *int32) int32 {
+	if v != nil {
+		return *v
+	}
+	return 0
+}
+
+// Int32ValueOr returns the value of the int32 pointer passed in or the default value if the pointer is nil.
+func Int32ValueOr(v *int32, def int32) int32 {
+	if v != nil {
+		return *v
+	}
+	return def
+}
+
+// Int64Value returns the value of the int64 pointer passed in or 0 if the pointer is nil.
+func Int64Value(v *int64) int64 {
+	if v != nil {
+		return *v
+	}
+	return 0
+}
+
+// Int64ValueOr returns the value of the int64 pointer passed in or the default value if the pointer is nil.
+func Int64ValueOr(v *int64, def int64) int64 {
+	if v != nil {
+		return *v
+	}
+	return def
+}
+
+// UintValue returns the value of the uint pointer passed in or 0 if the pointer is nil.
+func UintValue(v *uint) uint {
+	if v != nil {
+		return *v
+	}
+	return 0
+}
+
+// UintValueOr returns the value of the uint pointer passed in or the default value if the pointer is nil.
+func UintValueOr(v *uint, def uint) uint {
+	if v != nil {
+		return *v
+	}
+	return def
+}
+
+// Uint8Value returns the value of the uint8 pointer passed in or 0 if the pointer is nil.
+func Uint8Value(v *uint8) uint8 {
+	if v != nil {
+		return *v
+	}
+	return 0
+}
+
+// Uint8ValueOr returns the value of the uint8 pointer passed in or the default value if the pointer is nil.
+func Uint8ValueOr(v *uint8, def uint8) uint8 {
+	if v != nil {
+		return *v
+	}
+	return def
+}
+
+// Uint16Value returns the value of the uint16 pointer passed in or 0 if the pointer is nil.
+func Uint16Value(v *uint16) uint16 {
+	if v != nil {
+		return *v
+	}
+	return 0
+}
+
+// Uint16ValueOr returns the value of the uint16 pointer passed in or the default value if the pointer is nil.
+func Uint16ValueOr(v *uint16, def uint16) uint16 {
+	if v != nil {
+		return *v
+	}
+	return def
+}
+
+// Uint32Value returns the value of the uint32 pointer passed in or 0 if the pointer is nil.
+func Uint32Value(v *uint32) uint32 {
+	if v != nil {
+		return *v
+	}
+	return 0
+}
+
+// Uint32ValueOr returns the value of the uint32 pointer passed in or the default value if the pointer is nil.
+func Uint32ValueOr(v *uint32, def uint32) uint32 {
+	if v != nil {
+		return *v
+	}
+	return def
+}
+
+// Uint64Value returns the value of the uint64 pointer passed in or 0 if the pointer is nil.
+func Uint64Value(v *uint64) uint64 {
+	if v != nil {
+		return *v
+	}
+	return 0
+}
+
+// Uint64ValueOr returns the value of the uint64 pointer passed in or the default value if the pointer is nil.
+func Uint64ValueOr(v *uint64, def uint64) uint64 {
+	if v != nil {
+		return *v
+	}
+	return def
+}
+
+// Float32Value returns the value of the float32 pointer passed in or 0 if the pointer is nil.
+func Float32Value(v *float32) float32 {
+	if v != nil {
+		return *v
+	}
+	return 0
+}
+
+// Float32ValueOr returns the value of the float32 pointer passed in or the default value if the pointer is nil.
+func Float32ValueOr(v *float32, def float32) float32 {
+	if v != nil {
+		return *v
+	}
+	return def
+}
+
+// Float64Value returns the value of the float64 pointer passed in or 0 if the pointer is nil.
+func Float64Value(v *float64) float64 {
+	if v != nil {
+		return *v
+	}
+	return 0
+}
+
+// Float64ValueOr returns the value of the float64 pointer passed in or the default value if the pointer is nil.
+func Float64ValueOr(v *float64, def float64) float64 {
+	if v != nil {
+		return *v
+	}
+	return def
+}
+
+// TimeValue returns the value of the time.Time pointer passed in or zero time if the pointer is nil.
+func TimeValue(v *time.Time) time.Time {
+	if v != nil {
+		return *v
+	}
+	return time.Time{}
+}
+
+// TimeValueOr returns the value of the time.Time pointer passed in or the default value if the pointer is nil.
+func TimeValueOr(v *time.Time, def time.Time) time.Time {
+	if v != nil {
+		return *v
+	}
+	return def
+}
+
+// DurationValue returns the value of the time.Duration pointer passed in or 0 if the pointer is nil.
+func DurationValue(v *time.Duration) time.Duration {
+	if v != nil {
+		return *v
+	}
+	return 0
+}
+
+// DurationValueOr returns the value of the time.Duration pointer passed in or the default value if the pointer is nil.
+func DurationValueOr(v *time.Duration, def time.Duration) time.Duration {
+	if v != nil {
+		return *v
+	}
+	return def
+}
+
+// Generic functions for any type (Go 1.18+)
+
+// Value returns the value of the pointer passed in or the zero value if the pointer is nil.
+func Value[T any](v *T) T {
+	if v != nil {
+		return *v
+	}
+	var zero T
+	return zero
+}
+
+// ValueOr returns the value of the pointer passed in or the default value if the pointer is nil.
+func ValueOr[T any](v *T, def T) T {
+	if v != nil {
+		return *v
+	}
+	return def
+}
+
+// IsNil checks if a pointer is nil.
+func IsNil[T any](v *T) bool {
+	return v == nil
+}
+
+// IsNotNil checks if a pointer is not nil.
+func IsNotNil[T any](v *T) bool {
+	return v != nil
 }

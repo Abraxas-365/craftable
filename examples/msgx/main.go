@@ -7,7 +7,6 @@ import (
 	"os"
 
 	"github.com/Abraxas-365/craftable/configx"
-	"github.com/Abraxas-365/craftable/errx"
 	"github.com/Abraxas-365/craftable/msgx"
 	"github.com/Abraxas-365/craftable/msgx/msgxproviders"
 )
@@ -67,7 +66,7 @@ func main() {
 
 	response, err := twilioProvider.Send(ctx, message)
 	if err != nil {
-		log.Fatalf("Failed to send message: %v", errx.Print(err))
+		log.Fatalf("Failed to send message: %v", err)
 	}
 
 	fmt.Printf("✅ Message sent successfully!\n")

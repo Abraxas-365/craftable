@@ -42,32 +42,16 @@ type Error struct {
 
 // Error implements the error interface
 func (e *Error) Error() string {
+	if e.Details != nil {
+		details := ""
+		for k, v := range e.Details {
+			details += fmt.Sprintf("%s: %v, ", k, v)
+		}
+		details = details[:len(details)-2] // Remove trailing comma and space
+		return fmt.Sprintf("[%s] %s: %s (%s)", e.Type, e.Code, e.Message, details)
+	}
+
 	return fmt.Sprintf("[%s] %s: %s", e.Type, e.Code, e.Message)
-}
-
-func Print(e error) string {
-	if e == nil {
-		return "nil"
-	}
-
-	var xerr *Error
-	if errors.As(e, &xerr) {
-		var details string
-		if xerr.Details != nil {
-			details = ""
-			for key, value := range xerr.Details {
-				details += fmt.Sprintf("%s: %v, ", key, value)
-			}
-		}
-
-		if details != "" {
-			return fmt.Sprintf("Error: %s, Details: {%s}, HTTP Status: %d", xerr.Error(), details, xerr.HTTPStatus)
-		}
-
-		return fmt.Sprintf("Error: %s, HTTP Status: %d", xerr.Error(), xerr.HTTPStatus)
-
-	}
-	return fmt.Sprintf("Error: %s", e.Error())
 }
 
 // Unwrap implements the errors.Unwrap interface for Go 1.13+ error unwrapping

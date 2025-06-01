@@ -4,11 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
-	"time"
 
 	"github.com/Abraxas-365/craftable/configx"
 	"github.com/Abraxas-365/craftable/msgx"
@@ -16,35 +12,30 @@ import (
 )
 
 func main() {
-	// Set environment variables programmatically for demo purposes
-	os.Setenv("MSGX_WHATSAPP_PHONE_NUMBER_ID", "your_phone_number_id")
-	os.Setenv("MSGX_WHATSAPP_ACCESS_TOKEN", "your_access_token")
-	os.Setenv("MSGX_WHATSAPP_WEBHOOK_SECRET", "your_webhook_secret")
-	os.Setenv("MSGX_WHATSAPP_VERIFY_TOKEN", "your_verify_token")
-	os.Setenv("MSGX_WHATSAPP_API_VERSION", "v18.0")
-	os.Setenv("MSGX_WHATSAPP_HTTP_TIMEOUT", "30")
-	os.Setenv("MSGX_WEBHOOK_PORT", "8080")
-	os.Setenv("MSGX_WEBHOOK_BASE_URL", "https://yourdomain.com")
-	os.Setenv("MSGX_TEST_PHONE_NUMBER", "+1234567890")
-	os.Setenv("MSGX_DEBUG", "true")
+	// Set environment variables for demo
+	os.Setenv("TWILIO_ACCOUNT_SID", "SID")
+	os.Setenv("TWILIO_AUTH_TOKEN", "TOKEN")
+	os.Setenv("TWILIO_FROM_NUMBER", "+16198485487")
+	os.Setenv("TWILIO_TEST_PHONE_NUMBER", "+<numer>")
 
-	// Create configuration from environment variables and defaults
+	// Create configuration
 	config, err := configx.NewBuilder().
 		WithDefaults(map[string]any{
-			"whatsapp": map[string]any{
-				"api_version":  "v18.0",
-				"http_timeout": 30,
+			"twilio": map[string]any{
+				"api": map[string]any{
+					"version": "2010-04-01",
+				},
+				"http": map[string]any{
+					"timeout": 30,
+				},
 			},
-			"webhook": map[string]any{
-				"port":     8080,
-				"base_url": "http://localhost:8080",
-			},
-			"debug": false,
 		}).
-		FromEnv("MSGX_").
+		FromEnv("TWILIO_").
 		RequireEnv(
-			"MSGX_WHATSAPP_PHONE_NUMBER_ID",
-			"MSGX_WHATSAPP_ACCESS_TOKEN",
+			"TWILIO_ACCOUNT_SID",
+			"TWILIO_AUTH_TOKEN",
+			"TWILIO_FROM_NUMBER",
+			"TWILIO_TEST_PHONE_NUMBER",
 		).
 		Build()
 
@@ -52,311 +43,34 @@ func main() {
 		log.Fatalf("Configuration error: %s", err)
 	}
 
-	// Create WhatsApp provider configuration from config
-	whatsappConfig := msgxproviders.WhatsAppConfig{
-		PhoneNumberID: config.Get("whatsapp.phone.number.id").AsString(),
-		AccessToken:   config.Get("whatsapp.access.token").AsString(),
-		WebhookSecret: config.Get("whatsapp.webhook.secret").AsString(),
-		VerifyToken:   config.Get("whatsapp.verify.token").AsString(),
-		APIVersion:    config.Get("whatsapp.api.version").AsString(),
-		HTTPTimeout:   config.Get("whatsapp.http.timeout").AsInt(),
-	}
+	// Create Twilio provider using config
+	twilioProvider := msgxproviders.NewTwilioProvider(msgxproviders.TwilioConfig{
+		AccountSID:  config.Get("account.sid").AsString(),
+		AuthToken:   config.Get("auth.token").AsString(),
+		FromNumber:  config.Get("from.number").AsString(),
+		APIVersion:  config.Get("api.version").AsString(),
+		HTTPTimeout: config.Get("http.timeout").AsInt(),
+	})
 
-	fmt.Println("WhatsApp Provider Configuration:", whatsappConfig)
-
-	// Get webhook configuration
-	webhookPort := config.Get("webhook.port").AsInt()
-	baseURL := config.Get("webhook.base.url").AsString()
-	debug := config.Get("debug").AsBool()
-
-	if debug {
-		log.Println("Debug mode enabled")
-		log.Printf("WhatsApp Config: Phone Number ID: %s, API Version: %s",
-			whatsappConfig.PhoneNumberID, whatsappConfig.APIVersion)
-		log.Printf("Webhook Config: Port: %d, Base URL: %s", webhookPort, baseURL)
-	}
-
-	// Create WhatsApp provider
-	whatsappProvider := msgxproviders.NewWhatsAppProvider(whatsappConfig)
-
-	// Create messaging service and register WhatsApp provider
-	service := msgx.NewService().
-		RegisterProvider("whatsapp", whatsappProvider, true).
-		OnMessage(func(ctx context.Context, message *msgx.IncomingMessage) error {
-			return handleIncomingMessage(ctx, message, config)
-		})
-
-	// Set up webhooks for receiving messages
-	if err := service.SetupWebhooks(webhookPort, baseURL); err != nil {
-		log.Printf("Failed to setup webhooks: %v", err)
-	}
-
-	// Start webhook server in a goroutine
-	go func() {
-		log.Printf("Starting webhook server on port %d", webhookPort)
-		if err := service.StartWebhookServer(); err != nil && err != http.ErrServerClosed {
-			log.Printf("Webhook server error: %v", err)
-		}
-	}()
-
-	// Add health check endpoint
-	setupHealthCheck(service, config)
-
-	// Demonstrate sending different types of messages
+	// Send a simple message
 	ctx := context.Background()
-
-	testPhoneNumber := config.Get("test.phone_number").AsString()
-	if testPhoneNumber == "" {
-		log.Println("MSGX_TEST_PHONE_NUMBER not set, skipping message sending examples")
-	} else {
-		demonstrateMessaging(ctx, service, testPhoneNumber, config)
-	}
-
-	// Wait for interrupt signal to gracefully shutdown
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	log.Println("Messaging service is running. Press Ctrl+C to stop.")
-	<-sigChan
-
-	log.Println("Shutting down...")
-}
-
-func demonstrateMessaging(ctx context.Context, service *msgx.Service, phoneNumber string, config configx.Config) {
-	debug := config.Get("debug").AsBool()
-
-	if debug {
-		log.Printf("Sending example messages to %s", phoneNumber)
-	}
-
-	// 1. Send a simple text message
-	textMessage := msgx.Message{
-		To:   phoneNumber,
+	message := msgx.Message{
+		To:   config.Get("test.phone.number").AsString(),
 		Type: msgx.MessageTypeText,
 		Content: msgx.Content{
 			Text: &msgx.TextContent{
-				Body:       "Hello! This is a test message from the msgx system with configx integration.",
-				PreviewURL: true,
-			},
-		},
-		Options: &msgx.MessageOptions{
-			Priority: msgx.PriorityNormal,
-		},
-		Metadata: map[string]string{
-			"source":      "example_app",
-			"environment": getEnvironment(config),
-		},
-	}
-
-	response, err := service.Send(ctx, textMessage)
-	if err != nil {
-		log.Printf("Failed to send text message: %v", err)
-	} else {
-		log.Printf("Text message sent successfully. ID: %s", response.MessageID)
-
-		// Check message status after a delay
-		if debug {
-			time.Sleep(2 * time.Second)
-			status, err := service.GetStatus(ctx, response.MessageID)
-			if err != nil {
-				log.Printf("Failed to get message status: %v", err)
-			} else {
-				log.Printf("Message status: %s", status.Status)
-			}
-		}
-	}
-
-	// 2. Send an image message with dynamic URL from config
-	imageURL := config.Get("example.image_url").AsStringDefault("https://picsum.photos/800/600")
-	imageMessage := msgx.Message{
-		To:   phoneNumber,
-		Type: msgx.MessageTypeImage,
-		Content: msgx.Content{
-			Media: &msgx.MediaContent{
-				URL:     imageURL,
-				Caption: "Sample image sent via msgx with configx!",
-			},
-		},
-		Metadata: map[string]string{
-			"type":       "demo_image",
-			"config_url": imageURL,
-		},
-	}
-
-	response, err = service.Send(ctx, imageMessage)
-	if err != nil {
-		log.Printf("Failed to send image message: %v", err)
-	} else {
-		log.Printf("Image message sent successfully. ID: %s", response.MessageID)
-	}
-
-	// 3. Send a document message
-	documentURL := config.Get("example.document_url").AsStringDefault("https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf")
-	documentMessage := msgx.Message{
-		To:   phoneNumber,
-		Type: msgx.MessageTypeDocument,
-		Content: msgx.Content{
-			Media: &msgx.MediaContent{
-				URL:      documentURL,
-				Caption:  "Sample PDF document from configx",
-				Filename: "sample.pdf",
+				Body: "Hello from Twilio SMS with configx! 🚀",
 			},
 		},
 	}
 
-	response, err = service.Send(ctx, documentMessage)
+	response, err := twilioProvider.Send(ctx, message)
 	if err != nil {
-		log.Printf("Failed to send document message: %v", err)
-	} else {
-		log.Printf("Document message sent successfully. ID: %s", response.MessageID)
+		log.Fatalf("Failed to send message: %v", err)
 	}
 
-	// 4. Send a template message using config
-	templateName := config.Get("whatsapp.template.name").AsStringDefault("hello_world")
-	templateLanguage := config.Get("whatsapp.template.language").AsStringDefault("en_US")
-
-	templateMessage := msgx.Message{
-		To:   phoneNumber,
-		Type: msgx.MessageTypeTemplate,
-		Content: msgx.Content{
-			Template: &msgx.TemplateContent{
-				Name:     templateName,
-				Language: templateLanguage,
-				Parameters: map[string]any{
-					"1": config.Get("app.name").AsStringDefault("msgx Demo"),
-				},
-			},
-		},
-	}
-
-	response, err = service.Send(ctx, templateMessage)
-	if err != nil {
-		log.Printf("Failed to send template message: %v", err)
-	} else {
-		log.Printf("Template message sent successfully. ID: %s", response.MessageID)
-	}
-
-	// 5. Send bulk messages with configurable count
-	bulkCount := config.Get("example.bulk.count").AsIntDefault(2)
-	bulkMessages := make([]msgx.Message, bulkCount)
-
-	for i := 0; i < bulkCount; i++ {
-		bulkMessages[i] = msgx.Message{
-			To:   phoneNumber,
-			Type: msgx.MessageTypeText,
-			Content: msgx.Content{
-				Text: &msgx.TextContent{
-					Body: fmt.Sprintf("Bulk message %d of %d (via configx)", i+1, bulkCount),
-				},
-			},
-		}
-	}
-
-	bulkResponse, err := service.SendBulk(ctx, bulkMessages)
-	if err != nil {
-		log.Printf("Failed to send bulk messages: %v", err)
-	} else {
-		log.Printf("Bulk messages sent. Total sent: %d, Total failed: %d",
-			bulkResponse.TotalSent, bulkResponse.TotalFailed)
-	}
-
-	// 6. Validate phone number
-	validation, err := service.ValidateNumber(ctx, phoneNumber)
-	if err != nil {
-		log.Printf("Failed to validate number: %v", err)
-	} else {
-		log.Printf("Number validation - Valid: %t, Carrier: %s, Country: %s",
-			validation.IsValid, validation.Carrier, validation.Country)
-	}
-}
-
-// handleIncomingMessage processes incoming messages from webhooks
-func handleIncomingMessage(ctx context.Context, message *msgx.IncomingMessage, config configx.Config) error {
-	debug := config.Get("debug").AsBool()
-	autoReply := config.Get("webhook.auto.reply").AsBoolDefault(true)
-
-	if debug {
-		log.Printf("Received message from %s (Provider: %s, Type: %s)",
-			message.From, message.Provider, message.Type)
-	}
-
-	switch message.Type {
-	case msgx.MessageTypeText:
-		if message.Content.Text != nil {
-			log.Printf("Text content: %s", message.Content.Text.Body)
-
-			// Auto-reply if enabled in config
-			if autoReply {
-				replyPrefix := config.Get("webhook.reply.prefix").AsStringDefault("Echo")
-				log.Printf("Would auto-reply with: %s: %s", replyPrefix, message.Content.Text.Body)
-			}
-		}
-
-	case msgx.MessageTypeImage:
-		if message.Content.Media != nil {
-			log.Printf("Received image: %s (Caption: %s)",
-				message.Content.Media.URL, message.Content.Media.Caption)
-		}
-
-	case msgx.MessageTypeDocument:
-		if message.Content.Media != nil {
-			log.Printf("Received document: %s (Filename: %s)",
-				message.Content.Media.URL, message.Content.Media.Filename)
-		}
-
-	case msgx.MessageTypeAudio:
-		if message.Content.Media != nil {
-			log.Printf("Received audio: %s", message.Content.Media.URL)
-		}
-
-	case msgx.MessageTypeVideo:
-		if message.Content.Media != nil {
-			log.Printf("Received video: %s (Caption: %s)",
-				message.Content.Media.URL, message.Content.Media.Caption)
-		}
-
-	default:
-		if debug {
-			log.Printf("Received unsupported message type: %s", message.Type)
-		}
-	}
-
-	// Handle message context (replies, forwards, etc.)
-	if message.Context != nil && debug {
-		if message.Context.ReplyToID != "" {
-			log.Printf("This is a reply to message: %s", message.Context.ReplyToID)
-		}
-		if message.Context.IsForwarded {
-			log.Printf("This message was forwarded from: %s", message.Context.ForwardedFrom)
-		}
-	}
-
-	return nil
-}
-
-func setupHealthCheck(service *msgx.Service, config configx.Config) {
-	healthPath := config.Get("webhook.health.path").AsStringDefault("/health")
-
-	http.HandleFunc(healthPath, func(w http.ResponseWriter, r *http.Request) {
-		// Check if the service is healthy
-		status := map[string]any{
-			"status":    "healthy",
-			"timestamp": time.Now().Format(time.RFC3339),
-			"service":   "msgx",
-			"version":   config.Get("app.version").AsStringDefault("1.0.0"),
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-
-		// Simple JSON response
-		fmt.Fprintf(w, `{"status":"%s","timestamp":"%s","service":"%s","version":"%s"}`,
-			status["status"], status["timestamp"], status["service"], status["version"])
-	})
-
-	log.Printf("Health check endpoint available at %s", healthPath)
-}
-
-func getEnvironment(config configx.Config) string {
-	return config.Get("app.environment").AsStringDefault("development")
+	fmt.Printf("✅ Message sent successfully!\n")
+	fmt.Printf("Message ID: %s\n", response.MessageID)
+	fmt.Printf("Status: %s\n", response.Status)
+	fmt.Printf("To: %s\n", response.To)
 }

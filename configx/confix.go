@@ -871,12 +871,14 @@ func WithEnv(prefix string, priority int) Option {
 	}
 }
 
+//-----------------------------------------------------------------------------
+// Map Source Implementation
+//-----------------------------------------------------------------------------
+
 // WithMap adds a map source
 func WithMap(values map[string]any, name string, priority int) Option {
 	return func(c *configuration) {
-		// This would normally call NewMapSource, which would be in sources.go
-		//TODO
-		log.Println("Map source not implemented")
+		c.AddSource(NewMapSource(values, name, priority))
 	}
 }
 

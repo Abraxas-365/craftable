@@ -47,25 +47,32 @@ func structFields(obj any) (map[string]fieldInfo, error) {
 
 		// Get the field value
 		fieldValue := val.Field(i)
+		fieldInterface := fieldValue.Interface()
 
-		// Add to the map
+		// Add to the map - store the actual interface{} value (including pointers)
 		fields[field.Name] = fieldInfo{
 			Name:  field.Name,
-			Value: fieldValue.Interface(),
+			Value: fieldInterface, // This preserves pointer types
 			Rules: parseTag(tag),
 			Type:  field.Type,
 		}
 
+		// For struct recursion, dereference pointers
+		actualFieldValue := fieldValue
+		if fieldValue.Kind() == reflect.Ptr && !fieldValue.IsNil() {
+			actualFieldValue = fieldValue.Elem()
+		}
+
 		// If the field is a struct, recursively process it
-		if fieldValue.Kind() == reflect.Struct {
+		if actualFieldValue.Kind() == reflect.Struct {
 			// Check if the struct implements Validatable
-			if _, ok := fieldValue.Interface().(Validatable); ok {
+			if _, ok := actualFieldValue.Interface().(Validatable); ok {
 				// Already handled by the Validatable interface
 				continue
 			}
 
 			// Check for embedded struct
-			nestedFields, err := structFields(fieldValue.Interface())
+			nestedFields, err := structFields(actualFieldValue.Interface())
 			if err != nil {
 				return nil, err
 			}
@@ -136,12 +143,9 @@ func isZero(value any) bool {
 
 	val := reflect.ValueOf(value)
 
-	// Dereference pointers
+	// For pointers, nil is considered zero (optional field)
 	if val.Kind() == reflect.Ptr {
-		if val.IsNil() {
-			return true
-		}
-		val = val.Elem()
+		return val.IsNil()
 	}
 
 	// Check for zero value based on type
@@ -161,4 +165,23 @@ func isZero(value any) bool {
 	default:
 		return reflect.DeepEqual(val.Interface(), reflect.Zero(val.Type()).Interface())
 	}
+}
+
+// dereferenceValue safely dereferences a pointer value
+// Returns the dereferenced value and whether it was nil
+func dereferenceValue(value any) (any, bool) {
+	if value == nil {
+		return nil, true
+	}
+
+	val := reflect.ValueOf(value)
+	if val.Kind() != reflect.Ptr {
+		return value, false
+	}
+
+	if val.IsNil() {
+		return nil, true
+	}
+
+	return val.Elem().Interface(), false
 }

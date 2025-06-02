@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -52,14 +53,51 @@ func getValidationFunc(name string) (ValidationFunc, bool) {
 	return nil, false
 }
 
+// dereferenceForValidation safely dereferences a pointer for validation
+// Returns the dereferenced value and whether the original was nil
+func dereferenceForValidation(value any) (any, bool) {
+	if value == nil {
+		return nil, true
+	}
+
+	val := reflect.ValueOf(value)
+	if val.Kind() != reflect.Ptr {
+		return value, false
+	}
+
+	if val.IsNil() {
+		return nil, true
+	}
+
+	return val.Elem().Interface(), false
+}
+
 // validateRequired validates that a value is not empty
 func validateRequired(value any, _ string) bool {
+	if value == nil {
+		return false
+	}
+
+	val := reflect.ValueOf(value)
+
+	// For pointers, check if they're nil
+	if val.Kind() == reflect.Ptr {
+		return !val.IsNil()
+	}
+
+	// For non-pointers, use the existing isZero logic
 	return !isZero(value)
 }
 
 // validateEmail validates that a value is a valid email address
 func validateEmail(value any, _ string) bool {
-	if str, ok := value.(string); ok {
+	// Dereference if it's a pointer
+	actualValue, isNil := dereferenceForValidation(value)
+	if isNil {
+		return true // nil pointers are valid for optional fields
+	}
+
+	if str, ok := actualValue.(string); ok {
 		_, err := mail.ParseAddress(str)
 		return err == nil
 	}
@@ -68,7 +106,12 @@ func validateEmail(value any, _ string) bool {
 
 // validateURL validates that a value is a valid URL
 func validateURL(value any, _ string) bool {
-	if str, ok := value.(string); ok {
+	actualValue, isNil := dereferenceForValidation(value)
+	if isNil {
+		return true
+	}
+
+	if str, ok := actualValue.(string); ok {
 		_, err := url.ParseRequestURI(str)
 		return err == nil && strings.Contains(str, ".")
 	}
@@ -77,12 +120,17 @@ func validateURL(value any, _ string) bool {
 
 // validateMin validates that a value is at least a minimum
 func validateMin(value any, param string) bool {
+	actualValue, isNil := dereferenceForValidation(value)
+	if isNil {
+		return true
+	}
+
 	min, err := strconv.Atoi(param)
 	if err != nil {
 		return false
 	}
 
-	switch v := value.(type) {
+	switch v := actualValue.(type) {
 	case string:
 		return len(v) >= min
 	case int:
@@ -111,7 +159,7 @@ func validateMin(value any, param string) bool {
 		return v >= float64(min)
 	default:
 		// For slices, maps, arrays, check length
-		rv := reflect.ValueOf(value)
+		rv := reflect.ValueOf(actualValue)
 		if rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map || rv.Kind() == reflect.Array {
 			return rv.Len() >= min
 		}
@@ -121,12 +169,17 @@ func validateMin(value any, param string) bool {
 
 // validateMax validates that a value is at most a maximum
 func validateMax(value any, param string) bool {
+	actualValue, isNil := dereferenceForValidation(value)
+	if isNil {
+		return true
+	}
+
 	max, err := strconv.Atoi(param)
 	if err != nil {
 		return false
 	}
 
-	switch v := value.(type) {
+	switch v := actualValue.(type) {
 	case string:
 		return len(v) <= max
 	case int:
@@ -155,7 +208,7 @@ func validateMax(value any, param string) bool {
 		return v <= float64(max)
 	default:
 		// For slices, maps, arrays, check length
-		rv := reflect.ValueOf(value)
+		rv := reflect.ValueOf(actualValue)
 		if rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map || rv.Kind() == reflect.Array {
 			return rv.Len() <= max
 		}
@@ -165,24 +218,28 @@ func validateMax(value any, param string) bool {
 
 // validateOneOf validates that a value is one of a list of values
 func validateOneOf(value any, param string) bool {
+	actualValue, isNil := dereferenceForValidation(value)
+	if isNil {
+		return true
+	}
+
 	allowedValues := strings.Fields(param)
 	if len(allowedValues) == 0 {
 		return false
 	}
 
-	strValue := fmt.Sprintf("%v", value)
-	for _, v := range allowedValues {
-		if v == strValue {
-			return true
-		}
-	}
-
-	return false
+	strValue := fmt.Sprintf("%v", actualValue)
+	return slices.Contains(allowedValues, strValue)
 }
 
 // validateRegex validates that a value matches a regular expression
 func validateRegex(value any, param string) bool {
-	if str, ok := value.(string); ok {
+	actualValue, isNil := dereferenceForValidation(value)
+	if isNil {
+		return true
+	}
+
+	if str, ok := actualValue.(string); ok {
 		re, err := regexp.Compile(param)
 		if err != nil {
 			return false
@@ -196,7 +253,12 @@ func validateRegex(value any, param string) bool {
 var uuidRegex = regexp.MustCompile(`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`)
 
 func validateUUID(value any, _ string) bool {
-	if str, ok := value.(string); ok {
+	actualValue, isNil := dereferenceForValidation(value)
+	if isNil {
+		return true
+	}
+
+	if str, ok := actualValue.(string); ok {
 		return uuidRegex.MatchString(strings.ToLower(str))
 	}
 	return false
@@ -204,7 +266,12 @@ func validateUUID(value any, _ string) bool {
 
 // validateAlphaNum validates that a value contains only alphanumeric characters
 func validateAlphaNum(value any, _ string) bool {
-	if str, ok := value.(string); ok {
+	actualValue, isNil := dereferenceForValidation(value)
+	if isNil {
+		return true
+	}
+
+	if str, ok := actualValue.(string); ok {
 		for _, char := range str {
 			if !unicode.IsLetter(char) && !unicode.IsNumber(char) {
 				return false
@@ -217,7 +284,12 @@ func validateAlphaNum(value any, _ string) bool {
 
 // validateAlpha validates that a value contains only alphabetic characters
 func validateAlpha(value any, _ string) bool {
-	if str, ok := value.(string); ok {
+	actualValue, isNil := dereferenceForValidation(value)
+	if isNil {
+		return true
+	}
+
+	if str, ok := actualValue.(string); ok {
 		for _, char := range str {
 			if !unicode.IsLetter(char) {
 				return false
@@ -230,7 +302,12 @@ func validateAlpha(value any, _ string) bool {
 
 // validateNumeric validates that a value contains only numeric characters
 func validateNumeric(value any, _ string) bool {
-	if str, ok := value.(string); ok {
+	actualValue, isNil := dereferenceForValidation(value)
+	if isNil {
+		return true
+	}
+
+	if str, ok := actualValue.(string); ok {
 		for _, char := range str {
 			if !unicode.IsNumber(char) {
 				return false
@@ -240,3 +317,4 @@ func validateNumeric(value any, _ string) bool {
 	}
 	return false
 }
+

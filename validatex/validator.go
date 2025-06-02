@@ -213,7 +213,7 @@ func (v *CustomValidator) Validate(obj any) error {
 	var validationErrors ValidationErrors
 
 	// Process all fields in the struct
-	for i := 0; i < typ.NumField(); i++ {
+	for i := range typ.NumField() {
 		field := typ.Field(i)
 
 		// Skip unexported fields
@@ -266,11 +266,17 @@ func (v *CustomValidator) Validate(obj any) error {
 			}
 		}
 
+		// For struct recursion, dereference pointers
+		actualFieldValue := fieldValue
+		if fieldValue.Kind() == reflect.Ptr && !fieldValue.IsNil() {
+			actualFieldValue = fieldValue.Elem()
+		}
+
 		// If the field is a struct, recursively validate it
-		if fieldValue.Kind() == reflect.Struct {
+		if actualFieldValue.Kind() == reflect.Struct {
 			// Skip if already validatable
-			if _, ok := fieldInterface.(Validatable); !ok {
-				if err := v.Validate(fieldInterface); err != nil {
+			if _, ok := actualFieldValue.Interface().(Validatable); !ok {
+				if err := v.Validate(actualFieldValue.Interface()); err != nil {
 					if validationErrs, ok := err.(ValidationErrors); ok {
 						// Add field name prefix to nested errors
 						for _, validationErr := range validationErrs {

@@ -37,7 +37,7 @@ type Error struct {
 	Message    string         `json:"message"`
 	Details    map[string]any `json:"details,omitempty"`
 	HTTPStatus int            `json:"-"` // Not exposed in JSON
-	cause      error          `json:"-"` // Underlying cause (not serialized)
+	Cause      error          `json:"-"` // Underlying cause (not serialized)
 }
 
 // Error implements the error interface
@@ -56,7 +56,7 @@ func (e *Error) Error() string {
 
 // Unwrap implements the errors.Unwrap interface for Go 1.13+ error unwrapping
 func (e *Error) Unwrap() error {
-	return e.cause
+	return e.Cause
 }
 
 // WithDetails adds details to the error and returns the same error
@@ -76,7 +76,7 @@ func (e *Error) WithDetail(key string, value any) *Error {
 
 // WithCause wraps another error as the cause of this error
 func (e *Error) WithCause(cause error) *Error {
-	e.cause = cause
+	e.Cause = cause
 	return e
 }
 
@@ -179,7 +179,7 @@ func (r *Registry) NewWithMessage(code Code, message string) *Error {
 // NewWithCause creates a new instance of a registered error with an underlying cause
 func (r *Registry) NewWithCause(code Code, cause error) *Error {
 	err := r.New(code)
-	err.cause = cause
+	err.Cause = cause
 	return err
 }
 
@@ -244,7 +244,7 @@ func Wrap(err error, message string, errType Type) *Error {
 			Message:    message,
 			Details:    xerr.Details,
 			HTTPStatus: xerr.HTTPStatus,
-			cause:      err,
+			Cause:      err,
 		}
 	}
 
@@ -253,7 +253,7 @@ func Wrap(err error, message string, errType Type) *Error {
 		Code:    Code(fmt.Sprintf("%s_ERROR", errType)),
 		Type:    errType,
 		Message: message,
-		cause:   err,
+		Cause:   err,
 	}
 }
 

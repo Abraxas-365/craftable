@@ -279,11 +279,11 @@ func (c *CLI) outputBeautifulText(err *Error) {
 	}
 
 	// Print cause chain if enabled and available
-	if c.options.ShowCause && err.cause != nil {
+	if c.options.ShowCause && err.Cause != nil {
 		fmt.Fprintln(os.Stderr)
 		headerColor.Fprintln(os.Stderr, "   CAUSE")
 
-		cause := err.cause
+		cause := err.Cause
 		indent := "   "
 		for cause != nil {
 			fmt.Fprintf(os.Stderr, "%s❯ %s\n", indent, cause.Error())

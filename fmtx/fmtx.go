@@ -317,14 +317,31 @@ func debugPointerWithOptions(v reflect.Value, depth int, opts DebugOptions) stri
 	}
 
 	var result strings.Builder
-	result.WriteString("&")
 
 	if opts.ShowAddresses {
-		addr := fmt.Sprintf("0x%x", v.Pointer())
-		result.WriteString(colorize(fmt.Sprintf("[%s] ", addr), Gray, opts.UseColors))
+		result.WriteString(colorize(fmt.Sprintf("(%p) ", v.Interface()), Gray, opts.UseColors))
 	}
 
-	result.WriteString(debugValueWithOptions(v.Elem(), depth, opts))
+	if opts.ShowTypes {
+		result.WriteString(colorize("*", Yellow, opts.UseColors))
+	}
+
+	// Check if the pointed value is an error
+	elem := v.Elem()
+	if elem.CanInterface() {
+		if err, ok := elem.Interface().(error); ok {
+			errorMsg := err.Error()
+			if opts.ShowTypes {
+				errorMsg = fmt.Sprintf("*error(%s): %s", elem.Type().String(), errorMsg)
+			} else {
+				errorMsg = fmt.Sprintf("*%s", errorMsg)
+			}
+			result.WriteString(colorize(errorMsg, Red, opts.UseColors))
+			return result.String()
+		}
+	}
+
+	result.WriteString(debugValueWithOptions(elem, depth, opts))
 	return result.String()
 }
 

@@ -1,10 +1,12 @@
-package storex
+package storexinmemory
 
 import (
 	"context"
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/Abraxas-365/craftable/storex"
 )
 
 // MemoryStore is an in-memory implementation of Repository, BulkOperator, TxManager, and ChangeStream
@@ -12,7 +14,7 @@ type MemoryStore[T any] struct {
 	data              map[string]T
 	mu                sync.RWMutex
 	idExtractor       func(T) string
-	changeSubscribers []chan ChangeEvent[T]
+	changeSubscribers []chan storex.ChangeEvent[T]
 	idGenerator       func() string
 }
 
@@ -72,7 +74,7 @@ func (ms *MemoryStore[T]) Create(ctx context.Context, item T) (T, error) {
 	// Check if record already exists
 	if _, exists := ms.data[id]; exists {
 		var zero T
-		return zero, storeErrors.New(ErrCreateFailed).WithDetail("reason", "ID already exists")
+		return zero, storex.StoreErrors.New(storex.ErrCreateFailed).WithDetail("reason", "ID already exists")
 	}
 
 	ms.data[id] = item
@@ -93,7 +95,7 @@ func (ms *MemoryStore[T]) FindByID(ctx context.Context, id string) (T, error) {
 	}
 
 	var zero T
-	return zero, storeErrors.New(ErrRecordNotFound).WithDetail("id", id)
+	return zero, storex.StoreErrors.New(storex.ErrRecordNotFound).WithDetail("id", id)
 }
 
 // FindOne retrieves a single entity that matches the filter
@@ -108,7 +110,7 @@ func (ms *MemoryStore[T]) FindOne(ctx context.Context, filter map[string]any) (T
 	}
 
 	var zero T
-	return zero, storeErrors.New(ErrRecordNotFound).WithDetail("filter", filter)
+	return zero, storex.StoreErrors.New(storex.ErrRecordNotFound).WithDetail("filter", filter)
 }
 
 // matchesFilter checks if an item matches the given filter
@@ -128,7 +130,7 @@ func (ms *MemoryStore[T]) Update(ctx context.Context, id string, item T) (T, err
 	oldItem, exists := ms.data[id]
 	if !exists {
 		var zero T
-		return zero, storeErrors.New(ErrRecordNotFound).WithDetail("id", id)
+		return zero, storex.StoreErrors.New(storex.ErrRecordNotFound).WithDetail("id", id)
 	}
 
 	ms.data[id] = item
@@ -146,7 +148,7 @@ func (ms *MemoryStore[T]) Delete(ctx context.Context, id string) error {
 
 	item, exists := ms.data[id]
 	if !exists {
-		return storeErrors.New(ErrRecordNotFound).WithDetail("id", id)
+		return storex.StoreErrors.New(storex.ErrRecordNotFound).WithDetail("id", id)
 	}
 
 	delete(ms.data, id)
@@ -158,7 +160,7 @@ func (ms *MemoryStore[T]) Delete(ctx context.Context, id string) error {
 }
 
 // Paginate retrieves entities with pagination
-func (ms *MemoryStore[T]) Paginate(ctx context.Context, opts PaginationOptions) (Paginated[T], error) {
+func (ms *MemoryStore[T]) Paginate(ctx context.Context, opts storex.PaginationOptions) (storex.Paginated[T], error) {
 	ms.mu.RLock()
 	defer ms.mu.RUnlock()
 
@@ -180,14 +182,14 @@ func (ms *MemoryStore[T]) Paginate(ctx context.Context, opts PaginationOptions) 
 	end := start + opts.PageSize
 
 	if start >= total {
-		return NewPaginated([]T{}, opts.Page, opts.PageSize, total), nil
+		return storex.NewPaginated([]T{}, opts.Page, opts.PageSize, total), nil
 	}
 
 	if end > total {
 		end = total
 	}
 
-	return NewPaginated(filteredItems[start:end], opts.Page, opts.PageSize, total), nil
+	return storex.NewPaginated(filteredItems[start:end], opts.Page, opts.PageSize, total), nil
 }
 
 // BulkInsert adds multiple entities in a single operation
@@ -210,7 +212,7 @@ func (ms *MemoryStore[T]) BulkInsert(ctx context.Context, items []T) error {
 		}
 
 		if _, exists := ms.data[id]; exists {
-			return storeErrors.New(ErrBulkOpFailed).WithDetail("reason", "duplicate ID found")
+			return storex.StoreErrors.New(storex.ErrBulkOpFailed).WithDetail("reason", "duplicate ID found")
 		}
 
 		ms.data[id] = item
@@ -236,12 +238,12 @@ func (ms *MemoryStore[T]) BulkUpdate(ctx context.Context, items []T) error {
 		}
 
 		if id == "" {
-			return storeErrors.New(ErrBulkOpFailed).WithDetail("reason", "item has no ID")
+			return storex.StoreErrors.New(storex.ErrBulkOpFailed).WithDetail("reason", "item has no ID")
 		}
 
 		oldItem, exists := ms.data[id]
 		if !exists {
-			return storeErrors.New(ErrBulkOpFailed).WithDetail("reason", "item not found")
+			return storex.StoreErrors.New(storex.ErrBulkOpFailed).WithDetail("reason", "item not found")
 		}
 
 		ms.data[id] = item
@@ -263,7 +265,7 @@ func (ms *MemoryStore[T]) BulkDelete(ctx context.Context, ids []string) error {
 	for _, id := range ids {
 		item, exists := ms.data[id]
 		if !exists {
-			return storeErrors.New(ErrBulkOpFailed).WithDetail("item not found id", id)
+			return storex.StoreErrors.New(storex.ErrBulkOpFailed).WithDetail("item not found id", id)
 		}
 
 		delete(ms.data, id)
@@ -284,7 +286,7 @@ func (ms *MemoryStore[T]) WithTransaction(ctx context.Context, fn func(txCtx con
 }
 
 // Search performs a full-text search
-func (ms *MemoryStore[T]) Search(ctx context.Context, query string, opts SearchOptions) ([]T, error) {
+func (ms *MemoryStore[T]) Search(ctx context.Context, query string, opts storex.SearchOptions) ([]T, error) {
 	ms.mu.RLock()
 	defer ms.mu.RUnlock()
 
@@ -315,9 +317,9 @@ func (ms *MemoryStore[T]) Search(ctx context.Context, query string, opts SearchO
 }
 
 // Watch creates a stream of change events
-func (ms *MemoryStore[T]) Watch(ctx context.Context, filter map[string]any) (<-chan ChangeEvent[T], error) {
+func (ms *MemoryStore[T]) Watch(ctx context.Context, filter map[string]any) (<-chan storex.ChangeEvent[T], error) {
 	ms.mu.Lock()
-	ch := make(chan ChangeEvent[T], 100) // Buffered channel
+	ch := make(chan storex.ChangeEvent[T], 100) // Buffered channel
 	ms.changeSubscribers = append(ms.changeSubscribers, ch)
 	ms.mu.Unlock()
 
@@ -341,7 +343,7 @@ func (ms *MemoryStore[T]) Watch(ctx context.Context, filter map[string]any) (<-c
 
 // notifyChange sends change notifications to subscribers
 func (ms *MemoryStore[T]) notifyChange(operation string, oldValue, newValue *T) {
-	event := ChangeEvent[T]{
+	event := storex.ChangeEvent[T]{
 		Operation: operation,
 		OldValue:  oldValue,
 		NewValue:  newValue,
@@ -385,4 +387,3 @@ func (ms *MemoryStore[T]) Clear() {
 
 	ms.data = make(map[string]T)
 }
-

@@ -1,4 +1,4 @@
-package fsxprovider
+package fsxlocal
 
 import (
 	"context"

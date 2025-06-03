@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Abraxas-365/craftable/storex"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -56,7 +57,7 @@ func (r *MongoRepository[T]) Create(ctx context.Context, item T) (T, error) {
 
 	result, err := r.collection.InsertOne(ctx, item)
 	if err != nil {
-		return empty, storeErrors.NewWithCause(ErrCreateFailed, err)
+		return empty, storex.StoreErrors.NewWithCause(storex.ErrCreateFailed, err)
 	}
 
 	// For auto-generated IDs, we need to fetch the item
@@ -64,7 +65,7 @@ func (r *MongoRepository[T]) Create(ctx context.Context, item T) (T, error) {
 		filter := bson.M{"_id": result.InsertedID}
 		err = r.collection.FindOne(ctx, filter).Decode(&item)
 		if err != nil {
-			return empty, storeErrors.NewWithCause(ErrSQLQueryFailed, err)
+			return empty, storex.StoreErrors.NewWithCause(storex.ErrSQLQueryFailed, err)
 		}
 	}
 
@@ -81,7 +82,7 @@ func (r *MongoRepository[T]) FindByID(ctx context.Context, id string) (T, error)
 	if r.idField == "_id" {
 		objID, err := primitive.ObjectIDFromHex(id)
 		if err != nil {
-			return empty, storeErrors.NewWithMessage(ErrInvalidID, "Invalid ObjectID format")
+			return empty, storex.StoreErrors.NewWithMessage(storex.ErrInvalidID, "Invalid ObjectID format")
 		}
 		filter = bson.M{"_id": objID}
 	} else {
@@ -91,9 +92,9 @@ func (r *MongoRepository[T]) FindByID(ctx context.Context, id string) (T, error)
 	err := r.collection.FindOne(ctx, filter).Decode(&result)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			return empty, storeErrors.NewWithMessage(ErrRecordNotFound, "ID: "+id)
+			return empty, storex.StoreErrors.NewWithMessage(storex.ErrRecordNotFound, "ID: "+id)
 		}
-		return empty, storeErrors.NewWithCause(ErrSQLQueryFailed, err)
+		return empty, storex.StoreErrors.NewWithCause(storex.ErrSQLQueryFailed, err)
 	}
 
 	return result, nil
@@ -105,7 +106,7 @@ func (r *MongoRepository[T]) FindOne(ctx context.Context, filter map[string]any)
 	var empty T
 
 	if len(filter) == 0 {
-		return empty, storeErrors.NewWithMessage(ErrInvalidQuery, "No filter provided")
+		return empty, storex.StoreErrors.NewWithMessage(storex.ErrInvalidQuery, "No filter provided")
 	}
 
 	// Convert map to BSON Document
@@ -117,9 +118,9 @@ func (r *MongoRepository[T]) FindOne(ctx context.Context, filter map[string]any)
 	err := r.collection.FindOne(ctx, bsonFilter).Decode(&result)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			return empty, storeErrors.NewWithMessage(ErrRecordNotFound, "Filter not matched")
+			return empty, storex.StoreErrors.NewWithMessage(storex.ErrRecordNotFound, "Filter not matched")
 		}
-		return empty, storeErrors.NewWithCause(ErrSQLQueryFailed, err)
+		return empty, storex.StoreErrors.NewWithCause(storex.ErrSQLQueryFailed, err)
 	}
 
 	return result, nil
@@ -134,7 +135,7 @@ func (r *MongoRepository[T]) Update(ctx context.Context, id string, item T) (T, 
 	if r.idField == "_id" {
 		objID, err := primitive.ObjectIDFromHex(id)
 		if err != nil {
-			return empty, storeErrors.NewWithMessage(ErrInvalidID, "Invalid ObjectID format")
+			return empty, storex.StoreErrors.NewWithMessage(storex.ErrInvalidID, "Invalid ObjectID format")
 		}
 		filter = bson.M{"_id": objID}
 	} else {
@@ -149,9 +150,9 @@ func (r *MongoRepository[T]) Update(ctx context.Context, id string, item T) (T, 
 	err := r.collection.FindOneAndUpdate(ctx, filter, update, opts).Decode(&result)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			return empty, storeErrors.NewWithMessage(ErrRecordNotFound, "ID: "+id)
+			return empty, storex.StoreErrors.NewWithMessage(storex.ErrRecordNotFound, "ID: "+id)
 		}
-		return empty, storeErrors.NewWithCause(ErrUpdateFailed, err)
+		return empty, storex.StoreErrors.NewWithCause(storex.ErrUpdateFailed, err)
 	}
 
 	return result, nil
@@ -164,7 +165,7 @@ func (r *MongoRepository[T]) Delete(ctx context.Context, id string) error {
 	if r.idField == "_id" {
 		objID, err := primitive.ObjectIDFromHex(id)
 		if err != nil {
-			return storeErrors.NewWithMessage(ErrInvalidID, "Invalid ObjectID format")
+			return storex.StoreErrors.NewWithMessage(storex.ErrInvalidID, "Invalid ObjectID format")
 		}
 		filter = bson.M{"_id": objID}
 	} else {
@@ -173,18 +174,18 @@ func (r *MongoRepository[T]) Delete(ctx context.Context, id string) error {
 
 	result, err := r.collection.DeleteOne(ctx, filter)
 	if err != nil {
-		return storeErrors.NewWithCause(ErrDeleteFailed, err)
+		return storex.StoreErrors.NewWithCause(storex.ErrDeleteFailed, err)
 	}
 
 	if result.DeletedCount == 0 {
-		return storeErrors.NewWithMessage(ErrRecordNotFound, "ID: "+id)
+		return storex.StoreErrors.NewWithMessage(storex.ErrRecordNotFound, "ID: "+id)
 	}
 
 	return nil
 }
 
 // Paginate retrieves entities with pagination
-func (r *MongoRepository[T]) Paginate(ctx context.Context, opts PaginationOptions) (Paginated[T], error) {
+func (r *MongoRepository[T]) Paginate(ctx context.Context, opts storex.PaginationOptions) (storex.Paginated[T], error) {
 	// Convert filters to BSON
 	filter := bson.M{}
 	for k, v := range opts.Filters {
@@ -220,23 +221,23 @@ func (r *MongoRepository[T]) Paginate(ctx context.Context, opts PaginationOption
 	// Execute the query
 	cursor, err := r.collection.Find(ctx, filter, findOptions)
 	if err != nil {
-		return Paginated[T]{}, storeErrors.NewWithCause(ErrSQLQueryFailed, err)
+		return storex.Paginated[T]{}, storex.StoreErrors.NewWithCause(storex.ErrSQLQueryFailed, err)
 	}
 	defer cursor.Close(ctx)
 
 	// Decode results
 	var items []T
 	if err = cursor.All(ctx, &items); err != nil {
-		return Paginated[T]{}, storeErrors.NewWithCause(ErrSQLQueryFailed, err)
+		return storex.Paginated[T]{}, storex.StoreErrors.NewWithCause(storex.ErrSQLQueryFailed, err)
 	}
 
 	// Count total documents
 	total, err := r.collection.CountDocuments(ctx, filter)
 	if err != nil {
-		return Paginated[T]{}, storeErrors.NewWithCause(ErrSQLCountFailed, err)
+		return storex.Paginated[T]{}, storex.StoreErrors.NewWithCause(storex.ErrSQLCountFailed, err)
 	}
 
-	return NewPaginated(items, opts.Page, opts.PageSize, int(total)), nil
+	return storex.NewPaginated(items, opts.Page, opts.PageSize, int(total)), nil
 }
 
 // MongoBulkOperator implements BulkOperator for MongoDB
@@ -263,7 +264,7 @@ func (b *MongoBulkOperator[T]) BulkInsert(ctx context.Context, items []T) error 
 
 	_, err := b.collection.InsertMany(ctx, documents)
 	if err != nil {
-		return storeErrors.NewWithCause(ErrBulkOpFailed, err)
+		return storex.StoreErrors.NewWithCause(storex.ErrBulkOpFailed, err)
 	}
 
 	return nil
@@ -300,7 +301,7 @@ func (b *MongoBulkOperator[T]) BulkUpdate(ctx context.Context, items []T) error 
 		}
 
 		if !found || id == nil {
-			return storeErrors.NewWithMessage(ErrInvalidID, "Missing ID for bulk update")
+			return storex.StoreErrors.NewWithMessage(storex.ErrInvalidID, "Missing ID for bulk update")
 		}
 
 		// Create update model
@@ -316,7 +317,7 @@ func (b *MongoBulkOperator[T]) BulkUpdate(ctx context.Context, items []T) error 
 
 	_, err := b.collection.BulkWrite(ctx, models)
 	if err != nil {
-		return storeErrors.NewWithCause(ErrBulkOpFailed, err)
+		return storex.StoreErrors.NewWithCause(storex.ErrBulkOpFailed, err)
 	}
 
 	return nil
@@ -335,7 +336,7 @@ func (b *MongoBulkOperator[T]) BulkDelete(ctx context.Context, ids []string) err
 		for _, id := range ids {
 			objID, err := primitive.ObjectIDFromHex(id)
 			if err != nil {
-				return storeErrors.NewWithMessage(ErrInvalidID, "Invalid ObjectID format")
+				return storex.StoreErrors.NewWithMessage(storex.ErrInvalidID, "Invalid ObjectID format")
 			}
 			objectIDs = append(objectIDs, objID)
 		}
@@ -346,11 +347,11 @@ func (b *MongoBulkOperator[T]) BulkDelete(ctx context.Context, ids []string) err
 
 	result, err := b.collection.DeleteMany(ctx, filter)
 	if err != nil {
-		return storeErrors.NewWithCause(ErrBulkOpFailed, err)
+		return storex.StoreErrors.NewWithCause(storex.ErrBulkOpFailed, err)
 	}
 
 	if result.DeletedCount == 0 {
-		return storeErrors.NewWithMessage(ErrRecordNotFound, "No records matched IDs for deletion")
+		return storex.StoreErrors.NewWithMessage(storex.ErrRecordNotFound, "No records matched IDs for deletion")
 	}
 
 	return nil
@@ -370,7 +371,7 @@ func NewMongoTxManager(client *mongo.Client) *MongoTxManager {
 func (tm *MongoTxManager) WithTransaction(ctx context.Context, fn func(txCtx context.Context) error) error {
 	session, err := tm.client.StartSession()
 	if err != nil {
-		return storeErrors.NewWithCause(ErrTxBeginFailed, err)
+		return storex.StoreErrors.NewWithCause(storex.ErrTxBeginFailed, err)
 	}
 	defer session.EndSession(ctx)
 
@@ -400,9 +401,9 @@ func NewMongoSearchable[T any](repo *MongoRepository[T]) *MongoSearchable[T] {
 }
 
 // Search performs a text search using MongoDB's text index
-func (s *MongoSearchable[T]) Search(ctx context.Context, query string, opts SearchOptions) ([]T, error) {
+func (s *MongoSearchable[T]) Search(ctx context.Context, query string, opts storex.SearchOptions) ([]T, error) {
 	if len(opts.Fields) == 0 {
-		return nil, storeErrors.NewWithMessage(ErrInvalidQuery, "No search fields specified")
+		return nil, storex.StoreErrors.NewWithMessage(storex.ErrInvalidQuery, "No search fields specified")
 	}
 
 	// Set default limit if not specified
@@ -434,14 +435,14 @@ func (s *MongoSearchable[T]) Search(ctx context.Context, query string, opts Sear
 	// Execute search
 	cursor, err := s.collection.Find(ctx, textSearchQuery, findOptions)
 	if err != nil {
-		return nil, storeErrors.NewWithCause(ErrSearchFailed, err)
+		return nil, storex.StoreErrors.NewWithCause(storex.ErrSearchFailed, err)
 	}
 	defer cursor.Close(ctx)
 
 	// Decode results
 	var results []T
 	if err = cursor.All(ctx, &results); err != nil {
-		return nil, storeErrors.NewWithCause(ErrSearchFailed, err)
+		return nil, storex.StoreErrors.NewWithCause(storex.ErrSearchFailed, err)
 	}
 
 	return results, nil
@@ -458,7 +459,7 @@ func NewMongoChangeStream[T any](repo *MongoRepository[T]) *MongoChangeStream[T]
 }
 
 // Watch creates a stream of change events
-func (cs *MongoChangeStream[T]) Watch(ctx context.Context, filter map[string]any) (<-chan ChangeEvent[T], error) {
+func (cs *MongoChangeStream[T]) Watch(ctx context.Context, filter map[string]any) (<-chan storex.ChangeEvent[T], error) {
 	// Configure the change stream pipeline
 	pipeline := mongo.Pipeline{}
 
@@ -474,10 +475,10 @@ func (cs *MongoChangeStream[T]) Watch(ctx context.Context, filter map[string]any
 	// Set up the change stream
 	stream, err := cs.collection.Watch(ctx, pipeline, opts)
 	if err != nil {
-		return nil, storeErrors.NewWithCause(ErrConnectionFailed, err)
+		return nil, storex.StoreErrors.NewWithCause(storex.ErrConnectionFailed, err)
 	}
 
-	events := make(chan ChangeEvent[T])
+	events := make(chan storex.ChangeEvent[T])
 
 	go func() {
 		defer close(events)
@@ -515,7 +516,7 @@ func (cs *MongoChangeStream[T]) Watch(ctx context.Context, filter map[string]any
 				newValue = &changeDoc.FullDocument
 			}
 
-			event := ChangeEvent[T]{
+			event := storex.ChangeEvent[T]{
 				Operation: operation,
 				OldValue:  oldValue,
 				NewValue:  newValue,
@@ -538,3 +539,21 @@ func (cs *MongoChangeStream[T]) Watch(ctx context.Context, filter map[string]any
 	return events, nil
 }
 
+// Helper function to check if a value is empty
+func isEmptyValue(v reflect.Value) bool {
+	switch v.Kind() {
+	case reflect.Array, reflect.Map, reflect.Slice, reflect.String:
+		return v.Len() == 0
+	case reflect.Bool:
+		return !v.Bool()
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return v.Int() == 0
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return v.Uint() == 0
+	case reflect.Float32, reflect.Float64:
+		return v.Float() == 0
+	case reflect.Interface, reflect.Ptr:
+		return v.IsNil()
+	}
+	return false
+}

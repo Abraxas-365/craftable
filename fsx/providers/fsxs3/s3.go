@@ -1,4 +1,4 @@
-package fsxprovider
+package fsxs3
 
 import (
 	"bytes"

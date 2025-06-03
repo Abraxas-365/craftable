@@ -1,4 +1,4 @@
-package storex
+package sotrexpostgres
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Abraxas-365/craftable/storex"
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
 	_ "github.com/lib/pq"
@@ -64,7 +65,7 @@ func (r *PgRepository[T]) Create(ctx context.Context, item T) (T, error) {
 	}
 
 	if len(fields) == 0 {
-		return empty, storeErrors.NewWithMessage(ErrInvalidQuery, "No fields to insert")
+		return empty, storex.StoreErrors.NewWithMessage(storex.ErrInvalidQuery, "No fields to insert")
 	}
 
 	query := fmt.Sprintf(
@@ -77,7 +78,7 @@ func (r *PgRepository[T]) Create(ctx context.Context, item T) (T, error) {
 	var result T
 	err := r.db.GetContext(ctx, &result, query, values...)
 	if err != nil {
-		return empty, storeErrors.NewWithCause(ErrCreateFailed, err)
+		return empty, storex.StoreErrors.NewWithCause(storex.ErrCreateFailed, err)
 	}
 
 	return result, nil
@@ -93,9 +94,9 @@ func (r *PgRepository[T]) FindByID(ctx context.Context, id string) (T, error) {
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return empty, storeErrors.NewWithMessage(ErrRecordNotFound, "ID: "+id)
+			return empty, storex.StoreErrors.NewWithMessage(storex.ErrRecordNotFound, "ID: "+id)
 		}
-		return empty, storeErrors.NewWithCause(ErrSQLQueryFailed, err)
+		return empty, storex.StoreErrors.NewWithCause(storex.ErrSQLQueryFailed, err)
 	}
 
 	return result, nil
@@ -107,7 +108,7 @@ func (r *PgRepository[T]) FindOne(ctx context.Context, filter map[string]any) (T
 	var empty T
 
 	if len(filter) == 0 {
-		return empty, storeErrors.NewWithMessage(ErrInvalidQuery, "No filter provided")
+		return empty, storex.StoreErrors.NewWithMessage(storex.ErrInvalidQuery, "No filter provided")
 	}
 
 	conditions := []string{}
@@ -126,9 +127,9 @@ func (r *PgRepository[T]) FindOne(ctx context.Context, filter map[string]any) (T
 	err := r.db.GetContext(ctx, &result, query, values...)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return empty, storeErrors.NewWithMessage(ErrRecordNotFound, "Filter: "+whereClause)
+			return empty, storex.StoreErrors.NewWithMessage(storex.ErrRecordNotFound, "Filter: "+whereClause)
 		}
-		return empty, storeErrors.NewWithCause(ErrSQLQueryFailed, err)
+		return empty, storex.StoreErrors.NewWithCause(storex.ErrSQLQueryFailed, err)
 	}
 
 	return result, nil
@@ -160,7 +161,7 @@ func (r *PgRepository[T]) Update(ctx context.Context, id string, item T) (T, err
 	}
 
 	if len(setClause) == 0 {
-		return empty, storeErrors.NewWithMessage(ErrInvalidQuery, "No fields to update")
+		return empty, storex.StoreErrors.NewWithMessage(storex.ErrInvalidQuery, "No fields to update")
 	}
 
 	values = append(values, id)
@@ -176,9 +177,9 @@ func (r *PgRepository[T]) Update(ctx context.Context, id string, item T) (T, err
 	err := r.db.GetContext(ctx, &result, query, values...)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return empty, storeErrors.NewWithMessage(ErrRecordNotFound, "ID: "+id)
+			return empty, storex.StoreErrors.NewWithMessage(storex.ErrRecordNotFound, "ID: "+id)
 		}
-		return empty, storeErrors.NewWithCause(ErrUpdateFailed, err)
+		return empty, storex.StoreErrors.NewWithCause(storex.ErrUpdateFailed, err)
 	}
 
 	return result, nil
@@ -190,23 +191,23 @@ func (r *PgRepository[T]) Delete(ctx context.Context, id string) error {
 	result, err := r.db.ExecContext(ctx, query, id)
 
 	if err != nil {
-		return storeErrors.NewWithCause(ErrDeleteFailed, err)
+		return storex.StoreErrors.NewWithCause(storex.ErrDeleteFailed, err)
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return storeErrors.NewWithCause(ErrSQLExecFailed, err)
+		return storex.StoreErrors.NewWithCause(storex.ErrSQLExecFailed, err)
 	}
 
 	if rowsAffected == 0 {
-		return storeErrors.NewWithMessage(ErrRecordNotFound, "ID: "+id)
+		return storex.StoreErrors.NewWithMessage(storex.ErrRecordNotFound, "ID: "+id)
 	}
 
 	return nil
 }
 
 // Paginate retrieves entities with pagination
-func (r *PgRepository[T]) Paginate(ctx context.Context, opts PaginationOptions) (Paginated[T], error) {
+func (r *PgRepository[T]) Paginate(ctx context.Context, opts storex.PaginationOptions) (storex.Paginated[T], error) {
 	// Process fields selection
 	fieldsClause := "*"
 	if len(opts.Fields) > 0 {
@@ -258,15 +259,15 @@ func (r *PgRepository[T]) Paginate(ctx context.Context, opts PaginationOptions) 
 
 	err := r.db.SelectContext(ctx, &items, dataQuery, params...)
 	if err != nil {
-		return Paginated[T]{}, storeErrors.NewWithCause(ErrSQLQueryFailed, err)
+		return storex.Paginated[T]{}, storex.StoreErrors.NewWithCause(storex.ErrSQLQueryFailed, err)
 	}
 
 	err = r.db.GetContext(ctx, &total, countQuery, params...)
 	if err != nil {
-		return Paginated[T]{}, storeErrors.NewWithCause(ErrSQLCountFailed, err)
+		return storex.Paginated[T]{}, storex.StoreErrors.NewWithCause(storex.ErrSQLCountFailed, err)
 	}
 
-	return NewPaginated(items, opts.Page, opts.PageSize, total), nil
+	return storex.NewPaginated(items, opts.Page, opts.PageSize, total), nil
 }
 
 // PgBulkOperator implements BulkOperator for PostgreSQL
@@ -310,7 +311,7 @@ func (b *PgBulkOperator[T]) BulkInsert(ctx context.Context, items []T) error {
 	}
 
 	if len(fields) == 0 {
-		return storeErrors.NewWithMessage(ErrInvalidQuery, "No fields to insert")
+		return storex.StoreErrors.NewWithMessage(storex.ErrInvalidQuery, "No fields to insert")
 	}
 
 	// Build query with multiple value groups
@@ -366,7 +367,7 @@ func (b *PgBulkOperator[T]) BulkInsert(ctx context.Context, items []T) error {
 
 	_, err := b.db.ExecContext(ctx, query, valueParams...)
 	if err != nil {
-		return storeErrors.NewWithCause(ErrBulkOpFailed, err)
+		return storex.StoreErrors.NewWithCause(storex.ErrBulkOpFailed, err)
 	}
 
 	return nil
@@ -377,7 +378,7 @@ func (b *PgBulkOperator[T]) BulkUpdate(ctx context.Context, items []T) error {
 	// Using transactions for bulk updates
 	tx, err := b.db.BeginTxx(ctx, nil)
 	if err != nil {
-		return storeErrors.NewWithCause(ErrTxBeginFailed, err)
+		return storex.StoreErrors.NewWithCause(storex.ErrTxBeginFailed, err)
 	}
 
 	defer func() {
@@ -408,7 +409,7 @@ func (b *PgBulkOperator[T]) BulkUpdate(ctx context.Context, items []T) error {
 		}
 
 		if !found || id == nil {
-			return storeErrors.NewWithMessage(ErrInvalidID, "Missing ID for bulk update")
+			return storex.StoreErrors.NewWithMessage(storex.ErrInvalidID, "Missing ID for bulk update")
 		}
 
 		// Build update for this item
@@ -443,12 +444,12 @@ func (b *PgBulkOperator[T]) BulkUpdate(ctx context.Context, items []T) error {
 
 		_, err = tx.ExecContext(ctx, query, values...)
 		if err != nil {
-			return storeErrors.NewWithCause(ErrUpdateFailed, err)
+			return storex.StoreErrors.NewWithCause(storex.ErrUpdateFailed, err)
 		}
 	}
 
 	if err = tx.Commit(); err != nil {
-		return storeErrors.NewWithCause(ErrTxCommitFailed, err)
+		return storex.StoreErrors.NewWithCause(storex.ErrTxCommitFailed, err)
 	}
 
 	return nil
@@ -477,16 +478,16 @@ func (b *PgBulkOperator[T]) BulkDelete(ctx context.Context, ids []string) error 
 
 	result, err := b.db.ExecContext(ctx, query, params...)
 	if err != nil {
-		return storeErrors.NewWithCause(ErrBulkOpFailed, err)
+		return storex.StoreErrors.NewWithCause(storex.ErrBulkOpFailed, err)
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return storeErrors.NewWithCause(ErrSQLExecFailed, err)
+		return storex.StoreErrors.NewWithCause(storex.ErrSQLExecFailed, err)
 	}
 
 	if rowsAffected == 0 {
-		return storeErrors.NewWithMessage(ErrRecordNotFound, "No records matched IDs for deletion")
+		return storex.StoreErrors.NewWithMessage(storex.ErrRecordNotFound, "No records matched IDs for deletion")
 	}
 
 	return nil
@@ -506,7 +507,7 @@ func NewPgTxManager(db *sqlx.DB) *PgTxManager {
 func (tm *PgTxManager) WithTransaction(ctx context.Context, fn func(txCtx context.Context) error) error {
 	tx, err := tm.db.BeginTxx(ctx, nil)
 	if err != nil {
-		return storeErrors.NewWithCause(ErrTxBeginFailed, err)
+		return storex.StoreErrors.NewWithCause(storex.ErrTxBeginFailed, err)
 	}
 
 	txCtx := context.WithValue(ctx, "tx", tx)
@@ -526,7 +527,7 @@ func (tm *PgTxManager) WithTransaction(ctx context.Context, fn func(txCtx contex
 	}
 
 	if err = tx.Commit(); err != nil {
-		return storeErrors.NewWithCause(ErrTxCommitFailed, err)
+		return storex.StoreErrors.NewWithCause(storex.ErrTxCommitFailed, err)
 	}
 
 	return nil
@@ -543,9 +544,9 @@ func NewPgSearchable[T any](repo *PgRepository[T]) *PgSearchable[T] {
 }
 
 // Search performs a full-text search using PostgreSQL's ts_vector
-func (s *PgSearchable[T]) Search(ctx context.Context, query string, opts SearchOptions) ([]T, error) {
+func (s *PgSearchable[T]) Search(ctx context.Context, query string, opts storex.SearchOptions) ([]T, error) {
 	if len(opts.Fields) == 0 {
-		return nil, storeErrors.NewWithMessage(ErrInvalidQuery, "No search fields specified")
+		return nil, storex.StoreErrors.NewWithMessage(storex.ErrInvalidQuery, "No search fields specified")
 	}
 
 	// Default values
@@ -589,7 +590,7 @@ func (s *PgSearchable[T]) Search(ctx context.Context, query string, opts SearchO
 	var results []T
 	err := s.db.SelectContext(ctx, &results, sqlQuery)
 	if err != nil {
-		return nil, storeErrors.NewWithCause(ErrSearchFailed, err)
+		return nil, storex.StoreErrors.NewWithCause(storex.ErrSearchFailed, err)
 	}
 
 	return results, nil
@@ -617,7 +618,7 @@ func NewPgChangeStream[T any](repo *PgRepository[T], connStr string, channel str
 
 	err := listener.Listen(channel)
 	if err != nil {
-		return nil, storeErrors.NewWithCause(ErrConnectionFailed, err)
+		return nil, storex.StoreErrors.NewWithCause(storex.ErrConnectionFailed, err)
 	}
 
 	return &PgChangeStream[T]{
@@ -628,8 +629,8 @@ func NewPgChangeStream[T any](repo *PgRepository[T], connStr string, channel str
 }
 
 // Watch creates a stream of change events
-func (cs *PgChangeStream[T]) Watch(ctx context.Context, filter map[string]any) (<-chan ChangeEvent[T], error) {
-	events := make(chan ChangeEvent[T])
+func (cs *PgChangeStream[T]) Watch(ctx context.Context, filter map[string]any) (<-chan storex.ChangeEvent[T], error) {
+	events := make(chan storex.ChangeEvent[T])
 
 	go func() {
 		defer close(events)
@@ -681,7 +682,7 @@ func (cs *PgChangeStream[T]) Watch(ctx context.Context, filter map[string]any) (
 					}
 				}
 
-				event := ChangeEvent[T]{
+				event := storex.ChangeEvent[T]{
 					Operation: payload.Operation,
 					OldValue:  oldValue,
 					NewValue:  newValue,
@@ -714,4 +715,3 @@ func isEmptyValue(v reflect.Value) bool {
 	}
 	return false
 }
-

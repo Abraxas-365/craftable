@@ -1,4 +1,4 @@
-package msgxproviders
+package msgxtwilio
 
 import (
 	"bytes"

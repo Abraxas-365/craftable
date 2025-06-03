@@ -1,4 +1,4 @@
-package errx
+package errxcobra
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Abraxas-365/craftable/errx"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
@@ -140,17 +141,17 @@ func (c *CLI) HandleError(err error) {
 	exitCode := 1
 
 	// Check if it's our Error type
-	var xerr *Error
+	var xerr *errx.Error
 	if errors.As(err, &xerr) {
 		// Set exit code based on error type
 		switch xerr.Type {
-		case TypeValidation:
+		case errx.TypeValidation:
 			exitCode = 2
-		case TypeAuthorization:
+		case errx.TypeAuthorization:
 			exitCode = 3
-		case TypeNotFound:
+		case errx.TypeNotFound:
 			exitCode = 4
-		case TypeInternal:
+		case errx.TypeInternal:
 			exitCode = 5
 		}
 
@@ -163,16 +164,16 @@ func (c *CLI) HandleError(err error) {
 	} else {
 		// Handle standard errors
 		if c.options.Format == OutputFormatJSON {
-			c.outputJSON(&Error{
+			c.outputJSON(&errx.Error{
 				Code:    "UNKNOWN_ERROR",
-				Type:    TypeInternal,
+				Type:    errx.TypeInternal,
 				Message: err.Error(),
 			})
 		} else {
 			// Create a simple error display for non-errx errors
-			genericErr := &Error{
+			genericErr := &errx.Error{
 				Code:    "UNKNOWN_ERROR",
-				Type:    TypeInternal,
+				Type:    errx.TypeInternal,
 				Message: err.Error(),
 			}
 			c.outputBeautifulText(genericErr)
@@ -185,24 +186,24 @@ func (c *CLI) HandleError(err error) {
 }
 
 // outputJSON outputs an error as JSON
-func (c *CLI) outputJSON(err *Error) {
-	output := map[string]interface{}{
-		"error": map[string]interface{}{
+func (c *CLI) outputJSON(err *errx.Error) {
+	output := map[string]any{
+		"error": map[string]any{
 			"message": err.Message,
 		},
 	}
 
 	// Only include fields based on options
 	if c.options.ShowCode {
-		output["error"].(map[string]interface{})["code"] = err.Code
+		output["error"].(map[string]any)["code"] = err.Code
 	}
 
 	if c.options.ShowType {
-		output["error"].(map[string]interface{})["type"] = err.Type
+		output["error"].(map[string]any)["type"] = err.Type
 	}
 
 	if c.options.ShowDetails && err.Details != nil && len(err.Details) > 0 {
-		output["error"].(map[string]interface{})["details"] = err.Details
+		output["error"].(map[string]any)["details"] = err.Details
 	}
 
 	jsonBytes, _ := json.MarshalIndent(output, "", "  ")
@@ -210,7 +211,7 @@ func (c *CLI) outputJSON(err *Error) {
 }
 
 // outputBeautifulText outputs an error as beautifully formatted text
-func (c *CLI) outputBeautifulText(err *Error) {
+func (c *CLI) outputBeautifulText(err *errx.Error) {
 	// Initialize colors
 	var errorColor, codeColor, typeColor, detailKeyColor, messageColor, headerColor, lineColor *color.Color
 
@@ -394,8 +395,8 @@ CAUSE
 Explicitly control which fields to display:
 
 ```go
-cli := errx.NewCLI(errx.CLIOptions{
-    DisplayMode: errx.DisplayModeCustom,
+cli := errxcobra.NewCLI(errxcobra.CLIOptions{
+    DisplayMode: errxcobra.DisplayModeCustom,
     ShowCode:    false,
     ShowType:    true,
     ShowDetails: true,
@@ -419,7 +420,7 @@ func NewUserCommand() *cobra.Command {
     }
 
     // Create error handler with simple display mode
-    cli := errx.NewCLI(errx.SimpleCLIOptions())
+    cli := errxcobra.NewCLI(errxcobra.SimpleCLIOptions())
 
     getUserCmd := &cobra.Command{
         Use:   "get [id]",
@@ -428,7 +429,7 @@ func NewUserCommand() *cobra.Command {
         RunE:  cli.HandleCommandError(func(cmd *cobra.Command, args []string) error {
             // Command implementation
             if userNotFound {
-                return errx.New("User not found", errx.TypeNotFound)
+                return errxcobra.New("User not found", errx.TypeNotFound)
             }
             return nil
         }),

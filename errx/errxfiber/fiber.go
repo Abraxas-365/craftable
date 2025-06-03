@@ -1,14 +1,15 @@
-package errx
+package errxfiber
 
 import (
 	"errors"
 	"log"
 
+	"github.com/Abraxas-365/craftable/errx"
 	"github.com/gofiber/fiber/v2"
 )
 
 // ToFiber converts the Error to a Fiber error response (for API contexts)
-func (e *Error) ToFiber() error {
+func ErrxToFiber(e *errx.Error) error {
 	return fiber.NewError(e.HTTPStatus, e.Message)
 }
 
@@ -19,7 +20,7 @@ func FiberErrorHandler() fiber.ErrorHandler {
 		log.Printf("Error handling request: %v", err)
 
 		// Check if it's our Error type
-		var xerr *Error
+		var xerr *errx.Error
 		if errors.As(err, &xerr) {
 			// Build error response
 			errorResponse := fiber.Map{
@@ -52,7 +53,7 @@ func FiberErrorHandler() fiber.ErrorHandler {
 			return c.Status(fiberErr.Code).JSON(fiber.Map{
 				"error": fiber.Map{
 					"code":    "FIBER_ERROR",
-					"type":    TypeInternal,
+					"type":    errx.TypeInternal,
 					"message": fiberErr.Message,
 				},
 			})
@@ -62,7 +63,7 @@ func FiberErrorHandler() fiber.ErrorHandler {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": fiber.Map{
 				"code":    "INTERNAL_ERROR",
-				"type":    TypeInternal,
+				"type":    errx.TypeInternal,
 				"message": err.Error(),
 			},
 		})
@@ -77,7 +78,7 @@ func FiberErrorHandler() fiber.ErrorHandler {
 Register the error handler with your Fiber app:
 
 	app := fiber.New(fiber.Config{
-		ErrorHandler: errx.FiberErrorHandler(),
+		ErrorHandler: errxfiber.FiberErrorHandler(),
 	})
 
 This will automatically format any errx.Error returned from your handlers

@@ -1,4 +1,4 @@
-package msgxproviders
+package msgxwhatsapp
 
 import (
 	"bytes"

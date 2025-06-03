@@ -1,4 +1,4 @@
-package authproviders
+package authgoogle
 
 import (
 	"context"

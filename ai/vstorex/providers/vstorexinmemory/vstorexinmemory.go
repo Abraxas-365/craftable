@@ -1,4 +1,4 @@
-package vectorstorex
+package vstorexinmemory
 
 import (
 	"context"
@@ -8,11 +8,13 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Abraxas-365/craftable/ai/vstorex"
 )
 
 // InMemoryStore provides an in-memory implementation of the Store interface
 type InMemoryStore struct {
-	docs       map[string]Document
+	docs       map[string]vstorex.Document
 	vectors    map[string][]float32
 	mu         sync.RWMutex
 	dimensions int
@@ -22,14 +24,14 @@ type InMemoryStore struct {
 // NewInMemoryStore creates a new in-memory vector store
 func NewInMemoryStore() *InMemoryStore {
 	return &InMemoryStore{
-		docs:    make(map[string]Document),
+		docs:    make(map[string]vstorex.Document),
 		vectors: make(map[string][]float32),
 		isOpen:  true,
 	}
 }
 
 // Initialize sets up the in-memory store with options
-func (s *InMemoryStore) Initialize(_ context.Context, options map[string]interface{}) error {
+func (s *InMemoryStore) Initialize(_ context.Context, options map[string]any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -39,7 +41,7 @@ func (s *InMemoryStore) Initialize(_ context.Context, options map[string]interfa
 			s.dimensions = dim
 		} else {
 			return fmt.Errorf("%w: invalid dimensions parameter: %v",
-				errRegistry.New(ErrCodeInvalidParameter), dimVal)
+				vstorex.ErrRegistry.New(vstorex.ErrCodeInvalidParameter), dimVal)
 		}
 	}
 
@@ -48,17 +50,17 @@ func (s *InMemoryStore) Initialize(_ context.Context, options map[string]interfa
 }
 
 // AddDocuments adds documents with their vectors to the in-memory store
-func (s *InMemoryStore) AddDocuments(_ context.Context, docs []Document, vectors [][]float32) error {
+func (s *InMemoryStore) AddDocuments(_ context.Context, docs []vstorex.Document, vectors [][]float32) error {
 	if len(docs) != len(vectors) {
 		return fmt.Errorf("%w: documents and vectors count mismatch: %d docs vs %d vectors",
-			errRegistry.New(ErrCodeInvalidParameter), len(docs), len(vectors))
+			vstorex.ErrRegistry.New(vstorex.ErrCodeInvalidParameter), len(docs), len(vectors))
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if !s.isOpen {
-		return errRegistry.New(ErrCodeStoreFailure).WithDetail("reason", "store is closed")
+		return vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure).WithDetail("reason", "store is closed")
 	}
 
 	// Check vectors dimensions
@@ -67,7 +69,7 @@ func (s *InMemoryStore) AddDocuments(_ context.Context, docs []Document, vectors
 		if s.dimensions == 0 && len(s.vectors) == 0 {
 			s.dimensions = len(vec)
 		} else if len(vec) != s.dimensions {
-			return errRegistry.New(ErrCodeInvalidVector).WithDetails(map[string]interface{}{
+			return vstorex.ErrRegistry.New(vstorex.ErrCodeInvalidVector).WithDetails(map[string]any{
 				"index":        i,
 				"expected_dim": s.dimensions,
 				"actual_dim":   len(vec),
@@ -78,7 +80,7 @@ func (s *InMemoryStore) AddDocuments(_ context.Context, docs []Document, vectors
 	// Store documents and vectors
 	for i, doc := range docs {
 		if doc.ID == "" {
-			return errRegistry.New(ErrCodeInvalidDocument).WithDetail("index", i).
+			return vstorex.ErrRegistry.New(vstorex.ErrCodeInvalidDocument).WithDetail("index", i).
 				WithDetail("reason", "document has no ID")
 		}
 
@@ -121,7 +123,7 @@ func cosineSimilarity(a, b []float32) float32 {
 }
 
 // documentMatchesFilter checks if a document matches the specified filter
-func documentMatchesFilter(doc Document, filter Filter) bool {
+func documentMatchesFilter(doc vstorex.Document, filter vstorex.Filter) bool {
 	if filter == nil {
 		return true
 	}
@@ -129,10 +131,10 @@ func documentMatchesFilter(doc Document, filter Filter) bool {
 	filterMap := filter.ToMap()
 
 	// Handle compound filters
-	if andFilters, ok := filterMap["$and"].([]map[string]interface{}); ok {
+	if andFilters, ok := filterMap["$and"].([]map[string]any); ok {
 		for _, andFilter := range andFilters {
 			// Create a MapFilter for each sub-filter
-			subFilter := MapFilter(andFilter)
+			subFilter := vstorex.MapFilter(andFilter)
 			if !documentMatchesFilter(doc, subFilter) {
 				return false
 			}
@@ -140,10 +142,10 @@ func documentMatchesFilter(doc Document, filter Filter) bool {
 		return true
 	}
 
-	if orFilters, ok := filterMap["$or"].([]map[string]interface{}); ok {
+	if orFilters, ok := filterMap["$or"].([]map[string]any); ok {
 		for _, orFilter := range orFilters {
 			// Create a MapFilter for each sub-filter
-			subFilter := MapFilter(orFilter)
+			subFilter := vstorex.MapFilter(orFilter)
 			if documentMatchesFilter(doc, subFilter) {
 				return true
 			}
@@ -151,8 +153,8 @@ func documentMatchesFilter(doc Document, filter Filter) bool {
 		return false
 	}
 
-	if notFilter, ok := filterMap["$not"].(map[string]interface{}); ok {
-		subFilter := MapFilter(notFilter)
+	if notFilter, ok := filterMap["$not"].(map[string]any); ok {
+		subFilter := vstorex.MapFilter(notFilter)
 		return !documentMatchesFilter(doc, subFilter)
 	}
 
@@ -187,7 +189,7 @@ func documentMatchesFilter(doc Document, filter Filter) bool {
 }
 
 // compareFieldValue performs a comparison based on the operator
-func compareFieldValue(doc Document, field, op string, expected interface{}) bool {
+func compareFieldValue(doc vstorex.Document, field, op string, expected any) bool {
 	// Get the actual value from metadata
 	actual, ok := doc.Metadata[field]
 	if !ok {
@@ -229,7 +231,7 @@ func compareFieldValue(doc Document, field, op string, expected interface{}) boo
 }
 
 // compareNumeric handles numeric comparisons
-func compareNumeric(a, b interface{}, op string) bool {
+func compareNumeric(a, b any, op string) bool {
 	// Try to convert both to float64 for comparison
 	aFloat, aErr := toFloat64(a)
 	bFloat, bErr := toFloat64(b)
@@ -253,7 +255,7 @@ func compareNumeric(a, b interface{}, op string) bool {
 }
 
 // toFloat64 attempts to convert various number types to float64
-func toFloat64(v interface{}) (float64, error) {
+func toFloat64(v any) (float64, error) {
 	switch n := v.(type) {
 	case int:
 		return float64(n), nil
@@ -271,9 +273,9 @@ func toFloat64(v interface{}) (float64, error) {
 }
 
 // valueInSlice checks if a value is in a slice
-func valueInSlice(value, slice interface{}) bool {
+func valueInSlice(value, slice any) bool {
 	switch s := slice.(type) {
-	case []interface{}:
+	case []any:
 		for _, item := range s {
 			if item == value {
 				return true
@@ -308,16 +310,16 @@ func valueInSlice(value, slice interface{}) bool {
 }
 
 // SimilaritySearch searches for similar documents
-func (s *InMemoryStore) SimilaritySearch(_ context.Context, vector []float32, options *SearchOptions) (*SearchResult, error) {
+func (s *InMemoryStore) SimilaritySearch(_ context.Context, vector []float32, options *vstorex.SearchOptions) (*vstorex.SearchResult, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	if !s.isOpen {
-		return nil, errRegistry.New(ErrCodeStoreFailure).WithDetail("reason", "store is closed")
+		return nil, vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure).WithDetail("reason", "store is closed")
 	}
 
 	if len(vector) != s.dimensions && s.dimensions > 0 {
-		return nil, errRegistry.New(ErrCodeInvalidVector).WithDetails(map[string]interface{}{
+		return nil, vstorex.ErrRegistry.New(vstorex.ErrCodeInvalidVector).WithDetails(map[string]any{
 			"expected_dim": s.dimensions,
 			"actual_dim":   len(vector),
 		})
@@ -337,7 +339,7 @@ func (s *InMemoryStore) SimilaritySearch(_ context.Context, vector []float32, op
 
 	// Calculate similarities and filter documents
 	type docWithScore struct {
-		doc   Document
+		doc   vstorex.Document
 		score float32
 	}
 
@@ -387,14 +389,14 @@ func (s *InMemoryStore) SimilaritySearch(_ context.Context, vector []float32, op
 		end = total
 	}
 
-	var pagedResults []Document
+	var pagedResults []vstorex.Document
 	if offset < total {
 		for _, res := range results[offset:end] {
 			pagedResults = append(pagedResults, res.doc)
 		}
 	}
 
-	return &SearchResult{
+	return &vstorex.SearchResult{
 		Documents: pagedResults,
 		Total:     total,
 		HasMore:   end < total,
@@ -402,19 +404,19 @@ func (s *InMemoryStore) SimilaritySearch(_ context.Context, vector []float32, op
 }
 
 // GetDocuments retrieves documents by their IDs
-func (s *InMemoryStore) GetDocuments(_ context.Context, ids []string) ([]Document, error) {
+func (s *InMemoryStore) GetDocuments(_ context.Context, ids []string) ([]vstorex.Document, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	if !s.isOpen {
-		return nil, errRegistry.New(ErrCodeStoreFailure).WithDetail("reason", "store is closed")
+		return nil, vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure).WithDetail("reason", "store is closed")
 	}
 
 	if len(ids) == 0 {
-		return nil, errRegistry.New(ErrCodeInvalidParameter).WithDetail("reason", "empty id list")
+		return nil, vstorex.ErrRegistry.New(vstorex.ErrCodeInvalidParameter).WithDetail("reason", "empty id list")
 	}
 
-	docs := make([]Document, 0, len(ids))
+	docs := make([]vstorex.Document, 0, len(ids))
 	for _, id := range ids {
 		if doc, exists := s.docs[id]; exists {
 			docs = append(docs, doc)
@@ -430,11 +432,11 @@ func (s *InMemoryStore) DeleteDocuments(_ context.Context, ids []string) error {
 	defer s.mu.Unlock()
 
 	if !s.isOpen {
-		return errRegistry.New(ErrCodeStoreFailure).WithDetail("reason", "store is closed")
+		return vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure).WithDetail("reason", "store is closed")
 	}
 
 	if len(ids) == 0 {
-		return errRegistry.New(ErrCodeInvalidParameter).WithDetail("reason", "empty id list")
+		return vstorex.ErrRegistry.New(vstorex.ErrCodeInvalidParameter).WithDetail("reason", "empty id list")
 	}
 
 	for _, id := range ids {
@@ -446,16 +448,16 @@ func (s *InMemoryStore) DeleteDocuments(_ context.Context, ids []string) error {
 }
 
 // DeleteByFilter removes documents matching the filter
-func (s *InMemoryStore) DeleteByFilter(_ context.Context, filter Filter) error {
+func (s *InMemoryStore) DeleteByFilter(_ context.Context, filter vstorex.Filter) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if !s.isOpen {
-		return errRegistry.New(ErrCodeStoreFailure).WithDetail("reason", "store is closed")
+		return vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure).WithDetail("reason", "store is closed")
 	}
 
 	if filter == nil {
-		return errRegistry.New(ErrCodeInvalidFilter).WithDetail("reason", "nil filter")
+		return vstorex.ErrRegistry.New(vstorex.ErrCodeInvalidFilter).WithDetail("reason", "nil filter")
 	}
 
 	var idsToDelete []string
@@ -479,11 +481,11 @@ func (s *InMemoryStore) DocumentExists(_ context.Context, ids []string) ([]bool,
 	defer s.mu.RUnlock()
 
 	if !s.isOpen {
-		return nil, errRegistry.New(ErrCodeStoreFailure).WithDetail("reason", "store is closed")
+		return nil, vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure).WithDetail("reason", "store is closed")
 	}
 
 	if len(ids) == 0 {
-		return nil, errRegistry.New(ErrCodeInvalidParameter).WithDetail("reason", "empty id list")
+		return nil, vstorex.ErrRegistry.New(vstorex.ErrCodeInvalidParameter).WithDetail("reason", "empty id list")
 	}
 
 	exists := make([]bool, len(ids))
@@ -495,12 +497,12 @@ func (s *InMemoryStore) DocumentExists(_ context.Context, ids []string) ([]bool,
 }
 
 // Count returns the number of documents matching a filter
-func (s *InMemoryStore) Count(_ context.Context, filter Filter) (int, error) {
+func (s *InMemoryStore) Count(_ context.Context, filter vstorex.Filter) (int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	if !s.isOpen {
-		return 0, errRegistry.New(ErrCodeStoreFailure).WithDetail("reason", "store is closed")
+		return 0, vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure).WithDetail("reason", "store is closed")
 	}
 
 	// If no filter, return total count
@@ -539,4 +541,3 @@ func (s *InMemoryStore) Features() map[string]bool {
 		"exact_match": true,
 	}
 }
-

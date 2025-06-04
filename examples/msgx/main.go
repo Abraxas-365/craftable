@@ -8,7 +8,7 @@ import (
 
 	"github.com/Abraxas-365/craftable/configx"
 	"github.com/Abraxas-365/craftable/msgx"
-	"github.com/Abraxas-365/craftable/msgx/msgxproviders"
+	"github.com/Abraxas-365/craftable/msgx/providers/msgxtwilio"
 )
 
 func main() {
@@ -44,7 +44,7 @@ func main() {
 	}
 
 	// Create Twilio provider using config
-	twilioProvider := msgxproviders.NewTwilioProvider(msgxproviders.TwilioConfig{
+	twilioProvider := msgxtwilio.NewTwilioProvider(msgxtwilio.TwilioConfig{
 		AccountSID:  config.Get("account.sid").AsString(),
 		AuthToken:   config.Get("auth.token").AsString(),
 		FromNumber:  config.Get("from.number").AsString(),

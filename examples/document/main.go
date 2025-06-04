@@ -8,7 +8,7 @@ import (
 
 	"github.com/Abraxas-365/craftable/ai/document"
 	"github.com/Abraxas-365/craftable/fsx"
-	"github.com/Abraxas-365/craftable/fsx/fsxprovider"
+	"github.com/Abraxas-365/craftable/fsx/providers/fsxlocal"
 )
 
 func main() {
@@ -26,7 +26,7 @@ func main() {
 	fmt.Printf("Created temporary directory at: %s\n", tempDir)
 
 	// Initialize the local filesystem provider
-	localFS := fsxprovider.NewLocalFS(tempDir)
+	localFS := fsxlocal.NewLocalFS(tempDir)
 
 	// Create test directory structure and files
 	setupTestFiles(ctx, localFS)
@@ -205,4 +205,3 @@ func truncateString(s string, maxLen int) string {
 	}
 	return s[:maxLen] + "..."
 }
-

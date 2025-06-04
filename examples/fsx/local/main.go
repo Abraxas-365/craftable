@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Abraxas-365/craftable/fsx/fsxprovider"
+	"github.com/Abraxas-365/craftable/fsx/providers/fsxlocal"
 )
 
 func main() {
@@ -23,7 +23,7 @@ func main() {
 	defer os.RemoveAll(tempDir) // Clean up when done
 
 	// Create a local filesystem provider
-	localFS := fsxprovider.NewLocalFS(tempDir)
+	localFS := fsxlocal.NewLocalFS(tempDir)
 
 	// Create a test document
 	testContent := []byte("This is a test document for the fsx example.\nIt demonstrates how to use the LocalFS provider.")
@@ -137,4 +137,3 @@ func main() {
 
 	fmt.Println("\nExample completed successfully")
 }
-

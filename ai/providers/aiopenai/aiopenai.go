@@ -1,4 +1,4 @@
-package aiproviders
+package aiopenai
 
 import (
 	"context"

@@ -6,7 +6,7 @@ import (
 	"io"
 
 	"github.com/Abraxas-365/craftable/fsx"
-	"github.com/Abraxas-365/craftable/fsx/fsxprovider"
+	"github.com/Abraxas-365/craftable/fsx/providers/fsxlocal"
 )
 
 //---------- Text-to-Speech (TTS) ----------//
@@ -123,7 +123,7 @@ type STTClient struct {
 // NewSTTClient creates a new speech-to-text client with default local filesystem
 func NewSTTClient(transcriber Transcriber) *STTClient {
 	// Use local filesystem by default
-	localFS := fsxprovider.NewLocalFS("")
+	localFS := fsxlocal.NewLocalFS("")
 
 	return &STTClient{
 		transcriber: transcriber,

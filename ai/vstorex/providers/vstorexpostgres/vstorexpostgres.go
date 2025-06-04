@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Abraxas-365/craftable/ai/vstorex"
 	"github.com/jmoiron/sqlx"
 	"github.com/pgvector/pgvector-go"
 )
@@ -138,18 +139,18 @@ func NewPGVectorStoreWithOptions(options *PGVectorStoreOptions) *PGVectorStore {
 }
 
 // Initialize sets up the PostgreSQL store
-func (s *PGVectorStore) Initialize(ctx context.Context, _ map[string]interface{}) error {
+func (s *PGVectorStore) Initialize(ctx context.Context, _ map[string]any) error {
 	// For backward compatibility, support the old map-based approach
 	// But primarily, we expect options to be set through NewPGVectorStoreWithOptions
 
 	if s.options.ConnectionString == "" {
 		return fmt.Errorf("%w: missing connection_string in options",
-			errRegistry.New(ErrCodeInvalidParameter))
+			vstorex.ErrRegistry.New(vstorex.ErrCodeInvalidParameter))
 	}
 
 	if s.options.Dimensions <= 0 {
 		return fmt.Errorf("%w: dimensions must be greater than 0",
-			errRegistry.New(ErrCodeInvalidParameter))
+			vstorex.ErrRegistry.New(vstorex.ErrCodeInvalidParameter))
 	}
 
 	// Connect to PostgreSQL
@@ -157,13 +158,13 @@ func (s *PGVectorStore) Initialize(ctx context.Context, _ map[string]interface{}
 	s.db, err = sqlx.Connect("postgres", s.options.ConnectionString)
 	if err != nil {
 		return fmt.Errorf("%w: failed to connect to PostgreSQL: %v",
-			errRegistry.New(ErrCodeStoreFailure), err)
+			vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure), err)
 	}
 
 	// Check connection
 	if err := s.db.Ping(); err != nil {
 		return fmt.Errorf("%w: failed to ping PostgreSQL: %v",
-			errRegistry.New(ErrCodeStoreFailure), err)
+			vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure), err)
 	}
 
 	// Enable the pgvector extension if requested
@@ -171,7 +172,7 @@ func (s *PGVectorStore) Initialize(ctx context.Context, _ map[string]interface{}
 		_, err = s.db.Exec("CREATE EXTENSION IF NOT EXISTS vector")
 		if err != nil {
 			return fmt.Errorf("%w: failed to enable vector extension: %v",
-				errRegistry.New(ErrCodeStoreFailure), err)
+				vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure), err)
 		}
 	}
 
@@ -191,7 +192,7 @@ func (s *PGVectorStore) Initialize(ctx context.Context, _ map[string]interface{}
 		_, err = s.db.Exec(createTableSQL)
 		if err != nil {
 			return fmt.Errorf("%w: failed to create table: %v",
-				errRegistry.New(ErrCodeStoreFailure), err)
+				vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure), err)
 		}
 	}
 
@@ -238,7 +239,7 @@ func (s *PGVectorStore) Initialize(ctx context.Context, _ map[string]interface{}
 		_, err = s.db.Exec(indexSQL)
 		if err != nil {
 			return fmt.Errorf("%w: failed to create vector index: %v",
-				errRegistry.New(ErrCodeStoreFailure), err)
+				vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure), err)
 		}
 	}
 
@@ -258,20 +259,20 @@ func (s *PGVectorStore) InitializeWithOptions(ctx context.Context, options *PGVe
 }
 
 // AddDocuments adds documents with their vectors to the PostgreSQL store
-func (s *PGVectorStore) AddDocuments(ctx context.Context, docs []Document, vectors [][]float32) error {
+func (s *PGVectorStore) AddDocuments(ctx context.Context, docs []vstorex.Document, vectors [][]float32) error {
 	if len(docs) != len(vectors) {
 		return fmt.Errorf("%w: documents and vectors count mismatch: %d docs vs %d vectors",
-			errRegistry.New(ErrCodeInvalidParameter), len(docs), len(vectors))
+			vstorex.ErrRegistry.New(vstorex.ErrCodeInvalidParameter), len(docs), len(vectors))
 	}
 
 	if !s.isOpen {
-		return errRegistry.New(ErrCodeStoreFailure).WithDetail("reason", "store is closed")
+		return vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure).WithDetail("reason", "store is closed")
 	}
 
 	// Check vectors dimensions
 	for i, vec := range vectors {
 		if len(vec) != s.options.Dimensions {
-			return errRegistry.New(ErrCodeInvalidVector).WithDetails(map[string]interface{}{
+			return vstorex.ErrRegistry.New(vstorex.ErrCodeInvalidVector).WithDetails(map[string]any{
 				"index":        i,
 				"expected_dim": s.options.Dimensions,
 				"actual_dim":   len(vec),
@@ -283,7 +284,7 @@ func (s *PGVectorStore) AddDocuments(ctx context.Context, docs []Document, vecto
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("%w: failed to start transaction: %v",
-			errRegistry.New(ErrCodeStoreFailure), err)
+			vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure), err)
 	}
 	defer tx.Rollback()
 
@@ -301,7 +302,7 @@ func (s *PGVectorStore) AddDocuments(ctx context.Context, docs []Document, vecto
 	stmt, err := tx.PrepareContext(ctx, insertSQL)
 	if err != nil {
 		return fmt.Errorf("%w: failed to prepare statement: %v",
-			errRegistry.New(ErrCodeStoreFailure), err)
+			vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure), err)
 	}
 	defer stmt.Close()
 
@@ -317,7 +318,7 @@ func (s *PGVectorStore) AddDocuments(ctx context.Context, docs []Document, vecto
 
 		for j, doc := range batchDocs {
 			if doc.ID == "" {
-				return errRegistry.New(ErrCodeInvalidDocument).WithDetail("index", i+j).
+				return vstorex.ErrRegistry.New(vstorex.ErrCodeInvalidDocument).WithDetail("index", i+j).
 					WithDetail("reason", "document has no ID")
 			}
 
@@ -332,7 +333,7 @@ func (s *PGVectorStore) AddDocuments(ctx context.Context, docs []Document, vecto
 			metadataJSON, err := json.Marshal(doc.Metadata)
 			if err != nil {
 				return fmt.Errorf("%w: failed to marshal metadata: %v",
-					errRegistry.New(ErrCodeStoreFailure), err)
+					vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure), err)
 			}
 
 			// Create pgvector Vector from float32 slice
@@ -342,7 +343,7 @@ func (s *PGVectorStore) AddDocuments(ctx context.Context, docs []Document, vecto
 			_, err = stmt.ExecContext(ctx, doc.ID, doc.PageContent, metadataJSON, pgvec, doc.CreatedAt, doc.UpdatedAt)
 			if err != nil {
 				return fmt.Errorf("%w: failed to insert document: %v",
-					errRegistry.New(ErrCodeStoreFailure), err)
+					vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure), err)
 			}
 		}
 	}
@@ -350,20 +351,20 @@ func (s *PGVectorStore) AddDocuments(ctx context.Context, docs []Document, vecto
 	// Commit transaction
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("%w: failed to commit transaction: %v",
-			errRegistry.New(ErrCodeStoreFailure), err)
+			vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure), err)
 	}
 
 	return nil
 }
 
 // SimilaritySearch searches for similar documents
-func (s *PGVectorStore) SimilaritySearch(ctx context.Context, vector []float32, options *SearchOptions) (*SearchResult, error) {
+func (s *PGVectorStore) SimilaritySearch(ctx context.Context, vector []float32, options *vstorex.SearchOptions) (*vstorex.SearchResult, error) {
 	if !s.isOpen {
-		return nil, errRegistry.New(ErrCodeStoreFailure).WithDetail("reason", "store is closed")
+		return nil, vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure).WithDetail("reason", "store is closed")
 	}
 
 	if len(vector) != s.options.Dimensions {
-		return nil, errRegistry.New(ErrCodeInvalidVector).WithDetails(map[string]interface{}{
+		return nil, vstorex.ErrRegistry.New(vstorex.ErrCodeInvalidVector).WithDetails(map[string]any{
 			"expected_dim": s.options.Dimensions,
 			"actual_dim":   len(vector),
 		})
@@ -401,7 +402,7 @@ func (s *PGVectorStore) SimilaritySearch(ctx context.Context, vector []float32, 
 			distanceExpr, s.options.TableName),
 	}
 
-	args := []interface{}{pgvector.NewVector(vector)}
+	args := []any{pgvector.NewVector(vector)}
 	paramCounter := 2
 
 	// Apply filter if provided
@@ -449,21 +450,21 @@ func (s *PGVectorStore) SimilaritySearch(ctx context.Context, vector []float32, 
 	err := s.db.GetContext(ctx, &total, countQuery, args...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: failed to count documents: %v",
-			errRegistry.New(ErrCodeStoreFailure), err)
+			vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure), err)
 	}
 
 	// Execute search query
 	rows, err := s.db.QueryxContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: failed to execute search query: %v",
-			errRegistry.New(ErrCodeStoreFailure), err)
+			vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure), err)
 	}
 	defer rows.Close()
 
 	// Process results
-	var documents []Document
+	var documents []vstorex.Document
 	for rows.Next() {
-		var doc Document
+		var doc vstorex.Document
 		var metadataJSON []byte
 		var pgvec pgvector.Vector
 		var score float32
@@ -471,14 +472,14 @@ func (s *PGVectorStore) SimilaritySearch(ctx context.Context, vector []float32, 
 		err := rows.Scan(&doc.ID, &doc.PageContent, &metadataJSON, &pgvec, &doc.CreatedAt, &doc.UpdatedAt, &score)
 		if err != nil {
 			return nil, fmt.Errorf("%w: failed to scan document: %v",
-				errRegistry.New(ErrCodeStoreFailure), err)
+				vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure), err)
 		}
 
 		// Parse metadata
-		doc.Metadata = make(map[string]interface{})
+		doc.Metadata = make(map[string]any)
 		if err := json.Unmarshal(metadataJSON, &doc.Metadata); err != nil {
 			return nil, fmt.Errorf("%w: failed to unmarshal metadata: %v",
-				errRegistry.New(ErrCodeStoreFailure), err)
+				vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure), err)
 		}
 
 		// Add score
@@ -494,10 +495,10 @@ func (s *PGVectorStore) SimilaritySearch(ctx context.Context, vector []float32, 
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("%w: error iterating results: %v",
-			errRegistry.New(ErrCodeStoreFailure), err)
+			vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure), err)
 	}
 
-	return &SearchResult{
+	return &vstorex.SearchResult{
 		Documents: documents,
 		Total:     total,
 		HasMore:   offset+len(documents) < total,
@@ -505,7 +506,7 @@ func (s *PGVectorStore) SimilaritySearch(ctx context.Context, vector []float32, 
 }
 
 // buildFilterSQL converts a Filter to SQL WHERE clause and parameters
-func buildFilterSQL(filter Filter, startParamIndex int) (string, []interface{}, error) {
+func buildFilterSQL(filter vstorex.Filter, startParamIndex int) (string, []any, error) {
 	if filter == nil {
 		return "", nil, nil
 	}
@@ -513,13 +514,13 @@ func buildFilterSQL(filter Filter, startParamIndex int) (string, []interface{}, 
 	filterMap := filter.ToMap()
 
 	// Handle compound filters
-	if andFilters, ok := filterMap["$and"].([]map[string]interface{}); ok {
+	if andFilters, ok := filterMap["$and"].([]map[string]any); ok {
 		clauses := make([]string, 0, len(andFilters))
-		params := make([]interface{}, 0)
+		params := make([]any, 0)
 		paramIndex := startParamIndex
 
 		for _, andFilter := range andFilters {
-			subFilter := MapFilter(andFilter)
+			subFilter := vstorex.MapFilter(andFilter)
 			subClause, subParams, err := buildFilterSQL(subFilter, paramIndex)
 			if err != nil {
 				return "", nil, err
@@ -538,13 +539,13 @@ func buildFilterSQL(filter Filter, startParamIndex int) (string, []interface{}, 
 		return "", nil, nil
 	}
 
-	if orFilters, ok := filterMap["$or"].([]map[string]interface{}); ok {
+	if orFilters, ok := filterMap["$or"].([]map[string]any); ok {
 		clauses := make([]string, 0, len(orFilters))
-		params := make([]interface{}, 0)
+		params := make([]any, 0)
 		paramIndex := startParamIndex
 
 		for _, orFilter := range orFilters {
-			subFilter := MapFilter(orFilter)
+			subFilter := vstorex.MapFilter(orFilter)
 			subClause, subParams, err := buildFilterSQL(subFilter, paramIndex)
 			if err != nil {
 				return "", nil, err
@@ -563,8 +564,8 @@ func buildFilterSQL(filter Filter, startParamIndex int) (string, []interface{}, 
 		return "", nil, nil
 	}
 
-	if notFilter, ok := filterMap["$not"].(map[string]interface{}); ok {
-		subFilter := MapFilter(notFilter)
+	if notFilter, ok := filterMap["$not"].(map[string]any); ok {
+		subFilter := vstorex.MapFilter(notFilter)
 		subClause, subParams, err := buildFilterSQL(subFilter, startParamIndex)
 		if err != nil {
 			return "", nil, err
@@ -588,7 +589,7 @@ func buildFilterSQL(filter Filter, startParamIndex int) (string, []interface{}, 
 
 	// Handle simple field-value filters (implicit equality)
 	clauses := make([]string, 0)
-	params := make([]interface{}, 0)
+	params := make([]any, 0)
 	paramIndex := startParamIndex
 
 	for field, value := range filterMap {
@@ -627,9 +628,9 @@ func buildFilterSQL(filter Filter, startParamIndex int) (string, []interface{}, 
 }
 
 // buildComparisonSQL builds SQL for a comparison operation
-func buildComparisonSQL(field, op string, value interface{}, paramIndex int) (string, []interface{}, error) {
+func buildComparisonSQL(field, op string, value any, paramIndex int) (string, []any, error) {
 	var clause string
-	var params []interface{}
+	var params []any
 
 	// Handle numeric operations specially
 	isNumeric := false
@@ -642,35 +643,35 @@ func buildComparisonSQL(field, op string, value interface{}, paramIndex int) (st
 	case "eq":
 		if isNumeric {
 			clause = fmt.Sprintf("(metadata->>'%s')::numeric = $%d", field, paramIndex)
-			params = []interface{}{value}
+			params = []any{value}
 		} else {
 			clause = fmt.Sprintf("metadata->>'%s' = $%d", field, paramIndex)
-			params = []interface{}{fmt.Sprintf("%v", value)}
+			params = []any{fmt.Sprintf("%v", value)}
 		}
 	case "neq":
 		if isNumeric {
 			clause = fmt.Sprintf("(metadata->>'%s')::numeric != $%d", field, paramIndex)
-			params = []interface{}{value}
+			params = []any{value}
 		} else {
 			clause = fmt.Sprintf("metadata->>'%s' != $%d", field, paramIndex)
-			params = []interface{}{fmt.Sprintf("%v", value)}
+			params = []any{fmt.Sprintf("%v", value)}
 		}
 	case "gt":
 		clause = fmt.Sprintf("(metadata->>'%s')::numeric > $%d", field, paramIndex)
-		params = []interface{}{value}
+		params = []any{value}
 	case "gte":
 		clause = fmt.Sprintf("(metadata->>'%s')::numeric >= $%d", field, paramIndex)
-		params = []interface{}{value}
+		params = []any{value}
 	case "lt":
 		clause = fmt.Sprintf("(metadata->>'%s')::numeric < $%d", field, paramIndex)
-		params = []interface{}{value}
+		params = []any{value}
 	case "lte":
 		clause = fmt.Sprintf("(metadata->>'%s')::numeric <= $%d", field, paramIndex)
-		params = []interface{}{value}
+		params = []any{value}
 	case "in":
-		if values, ok := value.([]interface{}); ok {
+		if values, ok := value.([]any); ok {
 			placeholders := make([]string, len(values))
-			params = make([]interface{}, len(values))
+			params = make([]any, len(values))
 
 			for i, v := range values {
 				placeholders[i] = fmt.Sprintf("$%d", paramIndex+i)
@@ -693,12 +694,12 @@ func buildComparisonSQL(field, op string, value interface{}, paramIndex int) (st
 				clause = fmt.Sprintf("metadata->>'%s' IN (%s)", field, strings.Join(placeholders, ", "))
 			}
 		} else {
-			return "", nil, errRegistry.New(ErrCodeInvalidFilter).WithDetail("reason", "invalid value for IN operator")
+			return "", nil, vstorex.ErrRegistry.New(vstorex.ErrCodeInvalidFilter).WithDetail("reason", "invalid value for IN operator")
 		}
 	case "nin":
-		if values, ok := value.([]interface{}); ok {
+		if values, ok := value.([]any); ok {
 			placeholders := make([]string, len(values))
-			params = make([]interface{}, len(values))
+			params = make([]any, len(values))
 
 			for i, v := range values {
 				placeholders[i] = fmt.Sprintf("$%d", paramIndex+i)
@@ -721,11 +722,11 @@ func buildComparisonSQL(field, op string, value interface{}, paramIndex int) (st
 				clause = fmt.Sprintf("metadata->>'%s' NOT IN (%s)", field, strings.Join(placeholders, ", "))
 			}
 		} else {
-			return "", nil, errRegistry.New(ErrCodeInvalidFilter).WithDetail("reason", "invalid value for NOT IN operator")
+			return "", nil, vstorex.ErrRegistry.New(vstorex.ErrCodeInvalidFilter).WithDetail("reason", "invalid value for NOT IN operator")
 		}
 	case "contains":
 		clause = fmt.Sprintf("metadata->>'%s' LIKE '%%' || $%d || '%%'", field, paramIndex)
-		params = []interface{}{value}
+		params = []any{value}
 	case "exists":
 		if val, ok := value.(bool); ok {
 			if val {
@@ -733,30 +734,30 @@ func buildComparisonSQL(field, op string, value interface{}, paramIndex int) (st
 			} else {
 				clause = fmt.Sprintf("NOT (metadata ? '%s')", field)
 			}
-			params = []interface{}{}
+			params = []any{}
 		} else {
-			return "", nil, errRegistry.New(ErrCodeInvalidFilter).WithDetail("reason", "invalid value for EXISTS operator")
+			return "", nil, vstorex.ErrRegistry.New(vstorex.ErrCodeInvalidFilter).WithDetail("reason", "invalid value for EXISTS operator")
 		}
 	default:
-		return "", nil, errRegistry.New(ErrCodeInvalidFilter).WithDetail("reason", "unknown operator: "+op)
+		return "", nil, vstorex.ErrRegistry.New(vstorex.ErrCodeInvalidFilter).WithDetail("reason", "unknown operator: "+op)
 	}
 
 	return clause, params, nil
 }
 
 // GetDocuments retrieves documents by their IDs
-func (s *PGVectorStore) GetDocuments(ctx context.Context, ids []string) ([]Document, error) {
+func (s *PGVectorStore) GetDocuments(ctx context.Context, ids []string) ([]vstorex.Document, error) {
 	if !s.isOpen {
-		return nil, errRegistry.New(ErrCodeStoreFailure).WithDetail("reason", "store is closed")
+		return nil, vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure).WithDetail("reason", "store is closed")
 	}
 
 	if len(ids) == 0 {
-		return nil, errRegistry.New(ErrCodeInvalidParameter).WithDetail("reason", "empty id list")
+		return nil, vstorex.ErrRegistry.New(vstorex.ErrCodeInvalidParameter).WithDetail("reason", "empty id list")
 	}
 
 	// Create placeholders for the query
 	placeholders := make([]string, len(ids))
-	args := make([]interface{}, len(ids))
+	args := make([]any, len(ids))
 	for i, id := range ids {
 		placeholders[i] = fmt.Sprintf("$%d", i+1)
 		args[i] = id
@@ -773,28 +774,28 @@ func (s *PGVectorStore) GetDocuments(ctx context.Context, ids []string) ([]Docum
 	rows, err := s.db.QueryxContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: failed to retrieve documents: %v",
-			errRegistry.New(ErrCodeStoreFailure), err)
+			vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure), err)
 	}
 	defer rows.Close()
 
 	// Process results
-	var documents []Document
+	var documents []vstorex.Document
 	for rows.Next() {
-		var doc Document
+		var doc vstorex.Document
 		var metadataJSON []byte
 		var pgvec pgvector.Vector
 
 		err := rows.Scan(&doc.ID, &doc.PageContent, &metadataJSON, &pgvec, &doc.CreatedAt, &doc.UpdatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("%w: failed to scan document: %v",
-				errRegistry.New(ErrCodeStoreFailure), err)
+				vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure), err)
 		}
 
 		// Parse metadata
-		doc.Metadata = make(map[string]interface{})
+		doc.Metadata = make(map[string]any)
 		if err := json.Unmarshal(metadataJSON, &doc.Metadata); err != nil {
 			return nil, fmt.Errorf("%w: failed to unmarshal metadata: %v",
-				errRegistry.New(ErrCodeStoreFailure), err)
+				vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure), err)
 		}
 
 		// Add vector
@@ -805,7 +806,7 @@ func (s *PGVectorStore) GetDocuments(ctx context.Context, ids []string) ([]Docum
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("%w: error iterating results: %v",
-			errRegistry.New(ErrCodeStoreFailure), err)
+			vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure), err)
 	}
 
 	return documents, nil
@@ -814,16 +815,16 @@ func (s *PGVectorStore) GetDocuments(ctx context.Context, ids []string) ([]Docum
 // DeleteDocuments removes documents by their IDs
 func (s *PGVectorStore) DeleteDocuments(ctx context.Context, ids []string) error {
 	if !s.isOpen {
-		return errRegistry.New(ErrCodeStoreFailure).WithDetail("reason", "store is closed")
+		return vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure).WithDetail("reason", "store is closed")
 	}
 
 	if len(ids) == 0 {
-		return errRegistry.New(ErrCodeInvalidParameter).WithDetail("reason", "empty id list")
+		return vstorex.ErrRegistry.New(vstorex.ErrCodeInvalidParameter).WithDetail("reason", "empty id list")
 	}
 
 	// Create placeholders for the query
 	placeholders := make([]string, len(ids))
-	args := make([]interface{}, len(ids))
+	args := make([]any, len(ids))
 	for i, id := range ids {
 		placeholders[i] = fmt.Sprintf("$%d", i+1)
 		args[i] = id
@@ -839,20 +840,20 @@ func (s *PGVectorStore) DeleteDocuments(ctx context.Context, ids []string) error
 	_, err := s.db.ExecContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("%w: failed to delete documents: %v",
-			errRegistry.New(ErrCodeStoreFailure), err)
+			vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure), err)
 	}
 
 	return nil
 }
 
 // DeleteByFilter removes documents matching the filter
-func (s *PGVectorStore) DeleteByFilter(ctx context.Context, filter Filter) error {
+func (s *PGVectorStore) DeleteByFilter(ctx context.Context, filter vstorex.Filter) error {
 	if !s.isOpen {
-		return errRegistry.New(ErrCodeStoreFailure).WithDetail("reason", "store is closed")
+		return vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure).WithDetail("reason", "store is closed")
 	}
 
 	if filter == nil {
-		return errRegistry.New(ErrCodeInvalidFilter).WithDetail("reason", "nil filter")
+		return vstorex.ErrRegistry.New(vstorex.ErrCodeInvalidFilter).WithDetail("reason", "nil filter")
 	}
 
 	// Build filter SQL
@@ -862,7 +863,7 @@ func (s *PGVectorStore) DeleteByFilter(ctx context.Context, filter Filter) error
 	}
 
 	if whereSQL == "" {
-		return errRegistry.New(ErrCodeInvalidFilter).WithDetail("reason", "empty filter")
+		return vstorex.ErrRegistry.New(vstorex.ErrCodeInvalidFilter).WithDetail("reason", "empty filter")
 	}
 
 	// Build the query
@@ -875,7 +876,7 @@ func (s *PGVectorStore) DeleteByFilter(ctx context.Context, filter Filter) error
 	_, err = s.db.ExecContext(ctx, query, params...)
 	if err != nil {
 		return fmt.Errorf("%w: failed to delete documents by filter: %v",
-			errRegistry.New(ErrCodeStoreFailure), err)
+			vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure), err)
 	}
 
 	return nil
@@ -884,11 +885,11 @@ func (s *PGVectorStore) DeleteByFilter(ctx context.Context, filter Filter) error
 // DocumentExists checks if documents exist
 func (s *PGVectorStore) DocumentExists(ctx context.Context, ids []string) ([]bool, error) {
 	if !s.isOpen {
-		return nil, errRegistry.New(ErrCodeStoreFailure).WithDetail("reason", "store is closed")
+		return nil, vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure).WithDetail("reason", "store is closed")
 	}
 
 	if len(ids) == 0 {
-		return nil, errRegistry.New(ErrCodeInvalidParameter).WithDetail("reason", "empty id list")
+		return nil, vstorex.ErrRegistry.New(vstorex.ErrCodeInvalidParameter).WithDetail("reason", "empty id list")
 	}
 
 	// Create a map to track existence
@@ -900,7 +901,7 @@ func (s *PGVectorStore) DocumentExists(ctx context.Context, ids []string) ([]boo
 
 	// Create placeholders for the query
 	placeholders := make([]string, len(ids))
-	args := make([]interface{}, len(ids))
+	args := make([]any, len(ids))
 	for i, id := range ids {
 		placeholders[i] = fmt.Sprintf("$%d", i+1)
 		args[i] = id
@@ -917,7 +918,7 @@ func (s *PGVectorStore) DocumentExists(ctx context.Context, ids []string) ([]boo
 	rows, err := s.db.QueryxContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: failed to check document existence: %v",
-			errRegistry.New(ErrCodeStoreFailure), err)
+			vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure), err)
 	}
 	defer rows.Close()
 
@@ -926,7 +927,7 @@ func (s *PGVectorStore) DocumentExists(ctx context.Context, ids []string) ([]boo
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			return nil, fmt.Errorf("%w: failed to scan document id: %v",
-				errRegistry.New(ErrCodeStoreFailure), err)
+				vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure), err)
 		}
 
 		if idx, ok := idMap[id]; ok {
@@ -936,16 +937,16 @@ func (s *PGVectorStore) DocumentExists(ctx context.Context, ids []string) ([]boo
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("%w: error iterating results: %v",
-			errRegistry.New(ErrCodeStoreFailure), err)
+			vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure), err)
 	}
 
 	return exists, nil
 }
 
 // Count returns the number of documents matching a filter
-func (s *PGVectorStore) Count(ctx context.Context, filter Filter) (int, error) {
+func (s *PGVectorStore) Count(ctx context.Context, filter vstorex.Filter) (int, error) {
 	if !s.isOpen {
-		return 0, errRegistry.New(ErrCodeStoreFailure).WithDetail("reason", "store is closed")
+		return 0, vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure).WithDetail("reason", "store is closed")
 	}
 
 	// Build base query
@@ -953,7 +954,7 @@ func (s *PGVectorStore) Count(ctx context.Context, filter Filter) (int, error) {
 
 	// Apply filter if provided
 	var whereSQL string
-	var params []interface{}
+	var params []any
 	var err error
 
 	if filter != nil {
@@ -971,7 +972,7 @@ func (s *PGVectorStore) Count(ctx context.Context, filter Filter) (int, error) {
 	err = s.db.GetContext(ctx, &count, query, params...)
 	if err != nil {
 		return 0, fmt.Errorf("%w: failed to count documents: %v",
-			errRegistry.New(ErrCodeStoreFailure), err)
+			vstorex.ErrRegistry.New(vstorex.ErrCodeStoreFailure), err)
 	}
 
 	return count, nil

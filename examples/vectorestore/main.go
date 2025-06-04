@@ -6,10 +6,11 @@ import (
 	"log"
 	"os"
 
-	"github.com/Abraxas-365/craftable/ai/aiproviders"
 	"github.com/Abraxas-365/craftable/ai/document"
+	"github.com/Abraxas-365/craftable/ai/providers/aiopenai"
 	"github.com/Abraxas-365/craftable/ai/splitterx"
-	"github.com/Abraxas-365/craftable/ai/vectorstorex"
+	"github.com/Abraxas-365/craftable/ai/vstorex"
+	"github.com/Abraxas-365/craftable/ai/vstorex/providers/vstorexinmemory"
 )
 
 func main() {
@@ -23,7 +24,7 @@ func main() {
 	}
 
 	// Create a new OpenAI provider
-	embedder := aiproviders.NewOpenAIProvider(apiKey)
+	embedder := aiopenai.NewOpenAIProvider(apiKey)
 
 	// Create a splitter for documents
 	splitter, err := splitterx.NewSimpleTokenSplitter(512, 20, "text-embedding-3-small")
@@ -32,7 +33,7 @@ func main() {
 	}
 
 	// Create an in-memory vector store
-	inMemoryStore := vectorstorex.NewInMemoryStore()
+	inMemoryStore := vstorexinmemory.NewInMemoryStore()
 
 	// Initialize the store with options
 	err = inMemoryStore.Initialize(ctx, map[string]interface{}{
@@ -44,12 +45,12 @@ func main() {
 	fmt.Println("In-memory store initialized successfully")
 
 	// Create the vector store with the InMemoryStore implementation
-	vectorStore := vectorstorex.CreateVectorStore(
+	vectorStore := vstorex.CreateVectorStore(
 		inMemoryStore,
 		embedder,
 		splitter,
-		vectorstorex.WithScoreThreshold(0.0), // Set to 0 to retrieve all matches
-		vectorstorex.WithNamespace("example"),
+		vstorex.WithScoreThreshold(0.0), // Set to 0 to retrieve all matches
+		vstorex.WithNamespace("example"),
 	)
 
 	// Initialize the vector store
@@ -98,8 +99,8 @@ func main() {
 	}
 
 	// Add documents to the vector store
-	addOptions := &vectorstorex.AddDocumentOptions{
-		ProcessOptions: vectorstorex.ProcessOptions{
+	addOptions := &vstorex.AddDocumentOptions{
+		ProcessOptions: vstorex.ProcessOptions{
 			SplitDocuments: true,
 			BatchSize:      10,
 		},
@@ -117,7 +118,7 @@ func main() {
 
 	// Example 1: Basic similarity search
 	query := "Tell me about artificial intelligence"
-	searchResult, err := vectorStore.SimilaritySearch(ctx, query, &vectorstorex.SearchOptions{
+	searchResult, err := vectorStore.SimilaritySearch(ctx, query, &vstorex.SearchOptions{
 		Limit: 2,
 	})
 	if err != nil {
@@ -132,11 +133,11 @@ func main() {
 	}
 
 	// Example 2: Search with filters
-	filter := vectorstorex.NewFilterBuilder().
+	filter := vstorex.NewFilterBuilder().
 		Eq("category", "technology").
 		Build()
 
-	filteredResults, err := vectorStore.SimilaritySearch(ctx, query, &vectorstorex.SearchOptions{
+	filteredResults, err := vectorStore.SimilaritySearch(ctx, query, &vstorex.SearchOptions{
 		Limit:  10,
 		Filter: filter,
 	})
@@ -152,10 +153,10 @@ func main() {
 	}
 
 	// Example 3: Complex compound filters
-	compoundFilter := vectorstorex.CompoundFilter{
-		And: []vectorstorex.Filter{
-			vectorstorex.MapFilter{"source": "example2"},
-			vectorstorex.ComparisonFilter{
+	compoundFilter := vstorex.CompoundFilter{
+		And: []vstorex.Filter{
+			vstorex.MapFilter{"source": "example2"},
+			vstorex.ComparisonFilter{
 				Field: "category",
 				Op:    "eq",
 				Value: "technology",
@@ -163,7 +164,7 @@ func main() {
 		},
 	}
 
-	complexResults, err := vectorStore.SimilaritySearch(ctx, "neural", &vectorstorex.SearchOptions{
+	complexResults, err := vectorStore.SimilaritySearch(ctx, "neural", &vstorex.SearchOptions{
 		Limit:          5,
 		Filter:         compoundFilter,
 		ScoreThreshold: 0.5,
@@ -191,7 +192,7 @@ func main() {
 	}
 
 	// Example 5: Count documents by filter
-	categoryFilter := vectorstorex.NewFilterBuilder().Eq("category", "technology").Build()
+	categoryFilter := vstorex.NewFilterBuilder().Eq("category", "technology").Build()
 	count, err := vectorStore.Count(ctx, categoryFilter)
 	if err != nil {
 		log.Fatalf("Count failed: %v", err)
@@ -212,11 +213,11 @@ func main() {
 
 	// Example 7: Get documents using metadata-based filtering
 	// USE A SIMPLE QUERY - this is the key fix
-	originalIdFilter := vectorstorex.NewFilterBuilder().
+	originalIdFilter := vstorex.NewFilterBuilder().
 		Eq("original_id", "doc1").
 		Build()
 
-	docsByOriginalId, err := vectorStore.SimilaritySearch(ctx, "fox", &vectorstorex.SearchOptions{
+	docsByOriginalId, err := vectorStore.SimilaritySearch(ctx, "fox", &vstorex.SearchOptions{
 		Filter:         originalIdFilter,
 		Limit:          10,
 		ScoreThreshold: 0.0, // Return any match regardless of score
@@ -233,11 +234,11 @@ func main() {
 
 	// Example 8: Get documents by source metadata
 	// USE A GENERIC QUERY STRING
-	sourceFilter := vectorstorex.NewFilterBuilder().
+	sourceFilter := vstorex.NewFilterBuilder().
 		Eq("source", "example1").
 		Build()
 
-	docsBySource, err := vectorStore.SimilaritySearch(ctx, "*", &vectorstorex.SearchOptions{
+	docsBySource, err := vectorStore.SimilaritySearch(ctx, "*", &vstorex.SearchOptions{
 		Filter:         sourceFilter,
 		Limit:          10,
 		ScoreThreshold: 0.0, // Important: return any match
@@ -253,7 +254,7 @@ func main() {
 	}
 
 	// Example 9: Delete documents by filter
-	deleteFilter := vectorstorex.NewFilterBuilder().Eq("category", "geography").Build()
+	deleteFilter := vstorex.NewFilterBuilder().Eq("category", "geography").Build()
 	err = vectorStore.DeleteByFilter(ctx, deleteFilter)
 	if err != nil {
 		log.Fatalf("Delete by filter failed: %v", err)
@@ -267,14 +268,14 @@ func main() {
 	fmt.Printf("\n🗑️ Deleted geography documents. Remaining document count: %d\n", countAfterDelete)
 
 	// Example 10: Using FilterBuilder with multiple clauses
-	advancedFilter := vectorstorex.NewFilterBuilder().
+	advancedFilter := vstorex.NewFilterBuilder().
 		And(
-			vectorstorex.NewFilterBuilder().Eq("source", "example2").Build(),
-			vectorstorex.NewFilterBuilder().Contains("page_content", "neural").Build(),
+			vstorex.NewFilterBuilder().Eq("source", "example2").Build(),
+			vstorex.NewFilterBuilder().Contains("page_content", "neural").Build(),
 		).
 		Build()
 
-	advancedResults, err := vectorStore.SimilaritySearch(ctx, "brain", &vectorstorex.SearchOptions{
+	advancedResults, err := vectorStore.SimilaritySearch(ctx, "brain", &vstorex.SearchOptions{
 		Limit:  5,
 		Filter: advancedFilter,
 	})
@@ -294,4 +295,3 @@ func main() {
 
 	fmt.Println("\n✅ Vector store example completed successfully")
 }
-

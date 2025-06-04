@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/Abraxas-365/craftable/fsx/fsxprovider"
+	"github.com/Abraxas-365/craftable/fsx/providers/fsxs3"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
@@ -21,7 +21,7 @@ func main() {
 	client := s3.NewFromConfig(cfg)
 
 	// Create S3FileSystem
-	fs := fsxprovider.NewS3FileSystem(client, "my-bucket", "my-prefix")
+	fs := fsxs3.NewS3FileSystem(client, "my-bucket", "my-prefix")
 
 	// Use the file system
 	ctx := context.Background()

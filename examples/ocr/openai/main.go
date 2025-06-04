@@ -6,8 +6,8 @@ import (
 	"log"
 	"os"
 
-	"github.com/Abraxas-365/craftable/ai/aiproviders"
 	"github.com/Abraxas-365/craftable/ai/ocr"
+	"github.com/Abraxas-365/craftable/ai/providers/aiopenai"
 )
 
 func main() {
@@ -18,7 +18,7 @@ func main() {
 	}
 
 	// Create a new OpenAI provider
-	provider := aiproviders.NewOpenAIProvider(apiKey)
+	provider := aiopenai.NewOpenAIProvider(apiKey)
 
 	// Create a context
 	ctx := context.Background()

@@ -1,4 +1,4 @@
-package vectorstorex
+package vstorex
 
 import (
 	"context"
@@ -14,33 +14,33 @@ import (
 
 // Error registry for vector store-specific errors
 var (
-	errRegistry = errx.NewRegistry("VSTORE")
+	ErrRegistry = errx.NewRegistry("VSTORE")
 
 	// Input validation errors
-	ErrCodeInvalidDocument  = errRegistry.Register("INVALID_DOCUMENT", errx.TypeValidation, 400, "Invalid document format")
-	ErrCodeInvalidVector    = errRegistry.Register("INVALID_VECTOR", errx.TypeValidation, 400, "Invalid vector dimensions")
-	ErrCodeInvalidFilter    = errRegistry.Register("INVALID_FILTER", errx.TypeValidation, 400, "Invalid filter expression")
-	ErrCodeInvalidParameter = errRegistry.Register("INVALID_PARAMETER", errx.TypeValidation, 400, "Invalid parameter value")
+	ErrCodeInvalidDocument  = ErrRegistry.Register("INVALID_DOCUMENT", errx.TypeValidation, 400, "Invalid document format")
+	ErrCodeInvalidVector    = ErrRegistry.Register("INVALID_VECTOR", errx.TypeValidation, 400, "Invalid vector dimensions")
+	ErrCodeInvalidFilter    = ErrRegistry.Register("INVALID_FILTER", errx.TypeValidation, 400, "Invalid filter expression")
+	ErrCodeInvalidParameter = ErrRegistry.Register("INVALID_PARAMETER", errx.TypeValidation, 400, "Invalid parameter value")
 
 	// Resource errors
-	ErrCodeDocumentNotFound   = errRegistry.Register("DOCUMENT_NOT_FOUND", errx.TypeNotFound, 404, "Document not found")
-	ErrCodeCollectionNotFound = errRegistry.Register("COLLECTION_NOT_FOUND", errx.TypeNotFound, 404, "Collection not found")
+	ErrCodeDocumentNotFound   = ErrRegistry.Register("DOCUMENT_NOT_FOUND", errx.TypeNotFound, 404, "Document not found")
+	ErrCodeCollectionNotFound = ErrRegistry.Register("COLLECTION_NOT_FOUND", errx.TypeNotFound, 404, "Collection not found")
 
 	// Operational errors
-	ErrCodeStoreFailure    = errRegistry.Register("STORE_FAILURE", errx.TypeSystem, 500, "Vector store operation failed")
-	ErrCodeInitFailure     = errRegistry.Register("INIT_FAILURE", errx.TypeSystem, 500, "Failed to initialize vector store")
-	ErrCodeConnectionError = errRegistry.Register("CONNECTION_ERROR", errx.TypeUnavailable, 503, "Failed to connect to vector database")
+	ErrCodeStoreFailure    = ErrRegistry.Register("STORE_FAILURE", errx.TypeSystem, 500, "Vector store operation failed")
+	ErrCodeInitFailure     = ErrRegistry.Register("INIT_FAILURE", errx.TypeSystem, 500, "Failed to initialize vector store")
+	ErrCodeConnectionError = ErrRegistry.Register("CONNECTION_ERROR", errx.TypeUnavailable, 503, "Failed to connect to vector database")
 
 	// Processing errors
-	ErrCodeEmbeddingFailure = errRegistry.Register("EMBEDDING_FAILURE", errx.TypeSystem, 500, "Failed to generate embeddings")
-	ErrCodeSplitterFailure  = errRegistry.Register("SPLITTER_FAILURE", errx.TypeSystem, 500, "Failed to split document")
-	ErrCodeSearchFailure    = errRegistry.Register("SEARCH_FAILURE", errx.TypeSystem, 500, "Failed to search vector store")
+	ErrCodeEmbeddingFailure = ErrRegistry.Register("EMBEDDING_FAILURE", errx.TypeSystem, 500, "Failed to generate embeddings")
+	ErrCodeSplitterFailure  = ErrRegistry.Register("SPLITTER_FAILURE", errx.TypeSystem, 500, "Failed to split document")
+	ErrCodeSearchFailure    = ErrRegistry.Register("SEARCH_FAILURE", errx.TypeSystem, 500, "Failed to search vector store")
 
 	// Concurrent operation errors
-	ErrCodeConflict = errRegistry.Register("CONFLICT", errx.TypeConflict, 409, "Concurrent operation conflict")
+	ErrCodeConflict = ErrRegistry.Register("CONFLICT", errx.TypeConflict, 409, "Concurrent operation conflict")
 
 	// Rate limiting
-	ErrCodeRateLimitExceeded = errRegistry.Register("RATE_LIMIT_EXCEEDED", errx.TypeRateLimit, 429, "Rate limit exceeded")
+	ErrCodeRateLimitExceeded = ErrRegistry.Register("RATE_LIMIT_EXCEEDED", errx.TypeRateLimit, 429, "Rate limit exceeded")
 )
 
 // Filter defines the interface for query filters
@@ -197,7 +197,7 @@ func CreateVectorStore(
 func (vs *VectorStore) Initialize(ctx context.Context) error {
 	err := vs.store.Initialize(ctx, vs.options.StoreOptions)
 	if err != nil {
-		return errRegistry.NewWithCause(ErrCodeInitFailure, err).
+		return ErrRegistry.NewWithCause(ErrCodeInitFailure, err).
 			WithDetail("store_type", fmt.Sprintf("%T", vs.store))
 	}
 	return nil
@@ -206,13 +206,13 @@ func (vs *VectorStore) Initialize(ctx context.Context) error {
 // validateDocuments performs validation on documents before processing
 func (vs *VectorStore) validateDocuments(docs []document.Document) error {
 	if len(docs) == 0 {
-		return errRegistry.New(ErrCodeInvalidDocument).
+		return ErrRegistry.New(ErrCodeInvalidDocument).
 			WithDetail("reason", "empty document list")
 	}
 
 	for i, doc := range docs {
 		if doc.PageContent == "" {
-			return errRegistry.New(ErrCodeInvalidDocument).
+			return ErrRegistry.New(ErrCodeInvalidDocument).
 				WithDetails(map[string]interface{}{
 					"index":  i,
 					"reason": "empty page content",
@@ -251,7 +251,7 @@ func (vs *VectorStore) AddDocuments(
 		var err error
 		processedDocs, err = vs.splitter.SplitDocuments(docs)
 		if err != nil {
-			return errRegistry.NewWithCause(ErrCodeSplitterFailure, err).
+			return ErrRegistry.NewWithCause(ErrCodeSplitterFailure, err).
 				WithDetail("splitter_type", fmt.Sprintf("%T", vs.splitter))
 		}
 	} else {
@@ -325,7 +325,7 @@ func (vs *VectorStore) AddDocuments(
 		// Generate embeddings
 		embeddings, err := vs.embedder.EmbedDocuments(ctx, texts)
 		if err != nil {
-			return errRegistry.NewWithCause(ErrCodeEmbeddingFailure, err).
+			return ErrRegistry.NewWithCause(ErrCodeEmbeddingFailure, err).
 				WithDetails(map[string]interface{}{
 					"batch_start": i,
 					"batch_size":  len(batch),
@@ -341,7 +341,7 @@ func (vs *VectorStore) AddDocuments(
 		// Store documents with vectors
 		err = vs.store.AddDocuments(ctx, batch, vectors)
 		if err != nil {
-			return errRegistry.NewWithCause(ErrCodeStoreFailure, err).
+			return ErrRegistry.NewWithCause(ErrCodeStoreFailure, err).
 				WithDetails(map[string]interface{}{
 					"batch_start": i,
 					"batch_size":  len(batch),
@@ -360,7 +360,7 @@ func (vs *VectorStore) SimilaritySearch(
 	options *SearchOptions,
 ) (*SearchResult, error) {
 	if query == "" {
-		return nil, errRegistry.New(ErrCodeInvalidParameter).
+		return nil, ErrRegistry.New(ErrCodeInvalidParameter).
 			WithDetail("parameter", "query").
 			WithDetail("reason", "empty query string")
 	}
@@ -380,7 +380,7 @@ func (vs *VectorStore) SimilaritySearch(
 	// Generate embedding for query
 	embedding, err := vs.embedder.EmbedQuery(ctx, query)
 	if err != nil {
-		return nil, errRegistry.NewWithCause(ErrCodeEmbeddingFailure, err).
+		return nil, ErrRegistry.NewWithCause(ErrCodeEmbeddingFailure, err).
 			WithDetail("query", query)
 	}
 
@@ -405,7 +405,7 @@ func (vs *VectorStore) SimilaritySearch(
 	// Perform search
 	result, err := vs.store.SimilaritySearch(ctx, embedding.Vector, options)
 	if err != nil {
-		return nil, errRegistry.NewWithCause(ErrCodeSearchFailure, err).
+		return nil, ErrRegistry.NewWithCause(ErrCodeSearchFailure, err).
 			WithDetails(map[string]interface{}{
 				"query":      query,
 				"limit":      options.Limit,
@@ -431,14 +431,14 @@ func (vs *VectorStore) SimilaritySearch(
 // GetDocuments retrieves documents by their IDs
 func (vs *VectorStore) GetDocuments(ctx context.Context, ids []string) ([]Document, error) {
 	if len(ids) == 0 {
-		return nil, errRegistry.New(ErrCodeInvalidParameter).
+		return nil, ErrRegistry.New(ErrCodeInvalidParameter).
 			WithDetail("parameter", "ids").
 			WithDetail("reason", "empty ID list")
 	}
 
 	docs, err := vs.store.GetDocuments(ctx, ids)
 	if err != nil {
-		return nil, errRegistry.NewWithCause(ErrCodeStoreFailure, err).
+		return nil, ErrRegistry.NewWithCause(ErrCodeStoreFailure, err).
 			WithDetails(map[string]interface{}{
 				"ids":       ids,
 				"operation": "get_documents",
@@ -446,7 +446,7 @@ func (vs *VectorStore) GetDocuments(ctx context.Context, ids []string) ([]Docume
 	}
 
 	if len(docs) == 0 {
-		return nil, errRegistry.New(ErrCodeDocumentNotFound).
+		return nil, ErrRegistry.New(ErrCodeDocumentNotFound).
 			WithDetail("ids", ids)
 	}
 
@@ -456,14 +456,14 @@ func (vs *VectorStore) GetDocuments(ctx context.Context, ids []string) ([]Docume
 // DeleteDocuments removes documents by their IDs
 func (vs *VectorStore) DeleteDocuments(ctx context.Context, ids []string) error {
 	if len(ids) == 0 {
-		return errRegistry.New(ErrCodeInvalidParameter).
+		return ErrRegistry.New(ErrCodeInvalidParameter).
 			WithDetail("parameter", "ids").
 			WithDetail("reason", "empty ID list")
 	}
 
 	err := vs.store.DeleteDocuments(ctx, ids)
 	if err != nil {
-		return errRegistry.NewWithCause(ErrCodeStoreFailure, err).
+		return ErrRegistry.NewWithCause(ErrCodeStoreFailure, err).
 			WithDetails(map[string]interface{}{
 				"ids":       ids,
 				"operation": "delete_documents",
@@ -475,7 +475,7 @@ func (vs *VectorStore) DeleteDocuments(ctx context.Context, ids []string) error 
 // DeleteByFilter removes documents matching the filter
 func (vs *VectorStore) DeleteByFilter(ctx context.Context, filter Filter) error {
 	if filter == nil {
-		return errRegistry.New(ErrCodeInvalidParameter).
+		return ErrRegistry.New(ErrCodeInvalidParameter).
 			WithDetail("parameter", "filter").
 			WithDetail("reason", "nil filter")
 	}
@@ -491,7 +491,7 @@ func (vs *VectorStore) DeleteByFilter(ctx context.Context, filter Filter) error 
 
 	err := vs.store.DeleteByFilter(ctx, filter)
 	if err != nil {
-		return errRegistry.NewWithCause(ErrCodeStoreFailure, err).
+		return ErrRegistry.NewWithCause(ErrCodeStoreFailure, err).
 			WithDetails(map[string]interface{}{
 				"filter":    filter.ToMap(),
 				"operation": "delete_by_filter",
@@ -503,14 +503,14 @@ func (vs *VectorStore) DeleteByFilter(ctx context.Context, filter Filter) error 
 // DocumentExists checks if documents exist
 func (vs *VectorStore) DocumentExists(ctx context.Context, ids []string) ([]bool, error) {
 	if len(ids) == 0 {
-		return nil, errRegistry.New(ErrCodeInvalidParameter).
+		return nil, ErrRegistry.New(ErrCodeInvalidParameter).
 			WithDetail("parameter", "ids").
 			WithDetail("reason", "empty ID list")
 	}
 
 	exists, err := vs.store.DocumentExists(ctx, ids)
 	if err != nil {
-		return nil, errRegistry.NewWithCause(ErrCodeStoreFailure, err).
+		return nil, ErrRegistry.NewWithCause(ErrCodeStoreFailure, err).
 			WithDetails(map[string]interface{}{
 				"ids":       ids,
 				"operation": "document_exists",
@@ -544,7 +544,7 @@ func (vs *VectorStore) Count(ctx context.Context, filter Filter) (int, error) {
 			details["filter"] = nil
 		}
 
-		return 0, errRegistry.NewWithCause(ErrCodeStoreFailure, err).
+		return 0, ErrRegistry.NewWithCause(ErrCodeStoreFailure, err).
 			WithDetails(details)
 	}
 	return count, nil
@@ -554,7 +554,7 @@ func (vs *VectorStore) Count(ctx context.Context, filter Filter) (int, error) {
 func (vs *VectorStore) Close() error {
 	err := vs.store.Close()
 	if err != nil {
-		return errRegistry.NewWithCause(ErrCodeConnectionError, err).
+		return ErrRegistry.NewWithCause(ErrCodeConnectionError, err).
 			WithDetail("operation", "close")
 	}
 	return nil
@@ -659,14 +659,14 @@ func (f CompoundFilter) ToMap() map[string]interface{} {
 func (f CompoundFilter) Validate() error {
 	// Check that at least one condition is specified
 	if len(f.And) == 0 && len(f.Or) == 0 && f.Not == nil {
-		return errRegistry.New(ErrCodeInvalidFilter).
+		return ErrRegistry.New(ErrCodeInvalidFilter).
 			WithDetail("reason", "compound filter must have at least one condition")
 	}
 
 	// Validate And conditions
 	for i, filter := range f.And {
 		if filter == nil {
-			return errRegistry.New(ErrCodeInvalidFilter).
+			return ErrRegistry.New(ErrCodeInvalidFilter).
 				WithDetails(map[string]interface{}{
 					"reason": "nil filter in 'and' array",
 					"index":  i,
@@ -684,7 +684,7 @@ func (f CompoundFilter) Validate() error {
 	// Validate Or conditions
 	for i, filter := range f.Or {
 		if filter == nil {
-			return errRegistry.New(ErrCodeInvalidFilter).
+			return ErrRegistry.New(ErrCodeInvalidFilter).
 				WithDetails(map[string]interface{}{
 					"reason": "nil filter in 'or' array",
 					"index":  i,
@@ -729,7 +729,7 @@ func (f ComparisonFilter) ToMap() map[string]interface{} {
 // Validate ensures the comparison filter is properly structured
 func (f ComparisonFilter) Validate() error {
 	if f.Field == "" {
-		return errRegistry.New(ErrCodeInvalidFilter).
+		return ErrRegistry.New(ErrCodeInvalidFilter).
 			WithDetail("reason", "empty field name in comparison filter")
 	}
 
@@ -743,7 +743,7 @@ func (f ComparisonFilter) Validate() error {
 	}
 
 	if !validOps[f.Op] {
-		return errRegistry.New(ErrCodeInvalidFilter).
+		return ErrRegistry.New(ErrCodeInvalidFilter).
 			WithDetails(map[string]interface{}{
 				"reason":          "invalid operator in comparison filter",
 				"operator":        f.Op,
@@ -759,7 +759,7 @@ func (f ComparisonFilter) Validate() error {
 		case []interface{}, []string, []int, []float64, []bool:
 			// Valid slice types
 		default:
-			return errRegistry.New(ErrCodeInvalidFilter).
+			return ErrRegistry.New(ErrCodeInvalidFilter).
 				WithDetails(map[string]interface{}{
 					"reason":     "'in' and 'nin' operators require array values",
 					"field":      f.Field,
@@ -901,7 +901,7 @@ func (fb *FilterBuilder) Build() Filter {
 // Validate ensures the filter is properly structured
 func (fb *FilterBuilder) Validate() error {
 	if fb.filter == nil {
-		return errRegistry.New(ErrCodeInvalidFilter).
+		return ErrRegistry.New(ErrCodeInvalidFilter).
 			WithDetail("reason", "nil filter in filter builder")
 	}
 

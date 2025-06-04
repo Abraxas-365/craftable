@@ -291,7 +291,7 @@ import (
     "time"
     
     "github.com/Abraxas-365/craftable/auth"
-    "github.com/Abraxas-365/craftable/auth/authproviders"
+    "github.com/Abraxas-365/craftable/auth/providers/authgoogle"
 )
 
 func main() {
@@ -308,7 +308,7 @@ func main() {
     )
     
     // Register providers
-    googleProvider := authproviders.NewGoogleProvider(
+    googleProvider := authgoogle.NewGoogleProvider(
         "client-id", 
         "client-secret", 
         "https://your-app.com/auth/callback/google",
@@ -333,7 +333,6 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
-	"github.com/yourusername/storex"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -358,7 +357,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
-	userRepo := storex.NewPgRepository[User](db, "users", "id")
+	userRepo := storexpostgres.NewPgRepository[User](db, "users", "id")
 
 	// MongoDB initialization
 	/*
@@ -366,7 +365,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to connect to MongoDB: %v", err)
 	}
-	collection := mongoClient.Database("mydatabase").Collection("users")
+	collection := storexmongomongoClient.Database("mydatabase").Collection("users")
 	userRepo := storex.NewMongoRepository[User](collection, "_id")
 	*/
 
@@ -430,7 +429,6 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
-	"github.com/yourusername/storex"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -781,7 +779,7 @@ import (
     "io"
     "os"
 
-    "github.com/Abraxas-365/craftable/ai/aiproviders"
+    "github.com/Abraxas-365/craftable/ai/providers/aiopenai"
     "github.com/Abraxas-365/craftable/ai/llm"
 )
 
@@ -794,7 +792,7 @@ func main() {
     }
 
     // Create the OpenAI provider
-    provider := aiproviders.NewOpenAIProvider(apiKey)
+    provider := aiopenai.NewOpenAIProvider(apiKey)
 
     // Create a client with the provider
     client := llm.NewClient(provider)
@@ -860,7 +858,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/Abraxas-365/craftable/ai/aiproviders"
+	"github.com/Abraxas-365/craftable/ai/providers/aiopenai"
 	"github.com/Abraxas-365/craftable/ai/llm"
 	"github.com/Abraxas-365/craftable/ai/llm/agentx"
 	"github.com/Abraxas-365/craftable/ai/llm/memoryx"
@@ -876,7 +874,7 @@ func main() {
 	}
 
 	// Create the LLM client using your existing provider
-	provider := aiproviders.NewOpenAIProvider(apiKey)
+	provider := aiopenai.NewOpenAIProvider(apiKey)
 	client := llm.NewClient(provider)
 
 	// Create a simple tool
@@ -1025,7 +1023,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/Abraxas-365/craftable/ai/aiproviders"
+	"github.com/Abraxas-365/craftable/ai/providers/aiopenai"
 	"github.com/Abraxas-365/craftable/ai/llm"
 	"github.com/Abraxas-365/craftable/ai/llm/agentx"
 	"github.com/Abraxas-365/craftable/ai/llm/guardrailx"
@@ -1042,7 +1040,7 @@ func main() {
 	}
 
 	// Create the LLM client
-	provider := aiproviders.NewOpenAIProvider(apiKey)
+	provider := aiopenai.NewOpenAIProvider(apiKey)
 	llmClient := llm.NewClient(provider)
 
 	// Create tools
@@ -1225,7 +1223,7 @@ import (
     "log"
     "os"
 
-    "github.com/Abraxas-365/craftable/ai/aiproviders"
+    "github.com/Abraxas-365/craftable/ai/providers/aiopenai"
     "github.com/Abraxas-365/craftable/ai/embedding"
 )
 
@@ -1237,7 +1235,7 @@ func main() {
     }
 
     // Create a new OpenAI provider
-    provider := aiproviders.NewOpenAIProvider(apiKey)
+    provider := aiopenai.NewOpenAIProvider(apiKey)
 
     // Create embedding client
     embeddingClient := embedding.NewClient(provider)
@@ -1289,7 +1287,7 @@ import (
     "log"
     "os"
 
-    "github.com/Abraxas-365/craftable/ai/aiproviders"
+    "github.com/Abraxas-365/craftable/ai/providers/aiopenai"
     "github.com/Abraxas-365/craftable/ai/ocr"
 )
 
@@ -1301,7 +1299,7 @@ func main() {
     }
 
     // Create a new OpenAI provider
-    provider := aiproviders.NewOpenAIProvider(apiKey)
+    provider := aiopenai.NewOpenAIProvider(apiKey)
 
     // Create OCR client
     ocrClient := ocr.NewClient(provider)
@@ -1343,7 +1341,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Abraxas-365/craftable/ai/aiproviders"
+	"github.com/Abraxas-365/craftable/ai/providers/aiopenai"
 	"github.com/Abraxas-365/craftable/ai/speech"
 	"github.com/openai/openai-go"
 )
@@ -1353,7 +1351,7 @@ func main() {
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	
 	// Create provider and clients
-	provider := aiproviders.NewOpenAIProvider(apiKey)
+	provider := aiopenai.NewOpenAIProvider(apiKey)
 	ttsClient := speech.NewTTSClient(provider)
 	sttClient := speech.NewSTTClient(provider)
 	

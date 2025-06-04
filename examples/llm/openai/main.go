@@ -8,11 +8,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/Abraxas-365/craftable/ai/aiproviders"
 	"github.com/Abraxas-365/craftable/ai/llm"
 	"github.com/Abraxas-365/craftable/ai/llm/agentx"
 	"github.com/Abraxas-365/craftable/ai/llm/memoryx"
 	"github.com/Abraxas-365/craftable/ai/llm/toolx"
+	"github.com/Abraxas-365/craftable/ai/providers/aiopenai"
 )
 
 func main() {
@@ -24,7 +24,7 @@ func main() {
 	}
 
 	// Create the LLM client using your existing provider
-	provider := aiproviders.NewOpenAIProvider(apiKey)
+	provider := aiopenai.NewOpenAIProvider(apiKey)
 	client := llm.NewClient(provider)
 
 	// Create a simple tool

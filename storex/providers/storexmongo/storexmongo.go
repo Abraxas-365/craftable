@@ -1,4 +1,4 @@
-package storex
+package storexmongo
 
 import (
 	"context"

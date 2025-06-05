@@ -1,4 +1,4 @@
-package sotrexpostgres
+package storexpostgres
 
 import (
 	"context"

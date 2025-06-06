@@ -9,7 +9,7 @@ type ChatOptions struct {
 	Stop             []string          // Stop sequences
 	Tools            []Tool            // Available tools
 	Functions        []Function        // Available functions for backward compatibility
-	ToolChoice       interface{}       // Force specific tool
+	ToolChoice       any               // Force specific tool
 	ResponseFormat   *ResponseFormat   // Response format specification
 	PresencePenalty  float32           // Penalty for new tokens based on presence
 	FrequencyPenalty float32           // Penalty for new tokens based on frequency
@@ -74,7 +74,7 @@ func WithFunctions(functions []Function) Option {
 }
 
 // WithToolChoice forces a specific tool
-func WithToolChoice(toolChoice interface{}) Option {
+func WithToolChoice(toolChoice any) Option {
 	return func(o *ChatOptions) {
 		o.ToolChoice = toolChoice
 	}

@@ -17,14 +17,6 @@ type Memory interface {
 	// Clear resets the conversation but keeps the system prompt
 	// Returns error if the operation fails
 	Clear() error
-
-	// SystemPrompt gets the current system prompt
-	// May return error if retrieval fails
-	SystemPrompt() (string, error)
-
-	// UpdateSystemPrompt updates the system prompt
-	// Returns error if the operation fails
-	UpdateSystemPrompt(content string) error
 }
 
 // MemoryOption configures the memory

@@ -170,11 +170,6 @@ func (a *Agent) ClearMemory() error {
 	return a.memory.Clear()
 }
 
-// UpdateSystemPrompt changes the system prompt
-func (a *Agent) UpdateSystemPrompt(newPrompt string) error {
-	return a.memory.UpdateSystemPrompt(newPrompt)
-}
-
 // AddMessage adds a message to memory
 func (a *Agent) AddMessage(message llm.Message) error {
 	return a.memory.Add(message)

@@ -3,6 +3,7 @@ package storexpostgres
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -714,4 +715,28 @@ func isEmptyValue(v reflect.Value) bool {
 		return v.IsNil()
 	}
 	return false
+}
+
+// Custom JSONB type for PostgreSQL
+type JSONB map[string]any
+
+func (j JSONB) Value() (driver.Value, error) {
+	if j == nil {
+		return nil, nil
+	}
+	return json.Marshal(j)
+}
+
+func (j *JSONB) Scan(value any) error {
+	if value == nil {
+		*j = nil
+		return nil
+	}
+
+	bytes, ok := value.([]byte)
+	if !ok {
+		return fmt.Errorf("cannot scan %T into JSONB", value)
+	}
+
+	return json.Unmarshal(bytes, j)
 }

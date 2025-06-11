@@ -388,15 +388,7 @@ func (a *Agent) evaluateToolCalls(ctx context.Context, toolCalls []llm.ToolCall)
 		InputMessages: messages,
 	}
 
-	options := a.options
-	if a.tools != nil {
-		toolList := a.getToolsList()
-		if len(toolList) > 0 {
-			options = append(options, llm.WithTools(toolList))
-		}
-	}
-
-	response, err := a.client.Chat(ctx, messages, options...)
+	response, err := a.client.Chat(ctx, messages, a.options...)
 	if err != nil {
 		return "", steps, fmt.Errorf("LLM error: %w", err)
 	}

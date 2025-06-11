@@ -115,6 +115,9 @@ func (p *OpenAIProvider) Chat(ctx context.Context, messages []llm.Message, opts 
 		params.ResponseFormat = convertToResponseFormatParam(options.ResponseFormat)
 	}
 
+	if options.Seed != 0 {
+		params.Seed = openai.Int(options.Seed)
+	}
 	// Make the API call
 	completion, err := p.client.Chat.Completions.New(ctx, params)
 	if err != nil {

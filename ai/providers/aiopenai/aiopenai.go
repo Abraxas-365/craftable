@@ -374,7 +374,7 @@ func convertToOpenAITools(tools []llm.Tool, functions []llm.Function) []openai.C
 }
 
 func convertToOpenAIToolChoice(toolChoice any) openai.ChatCompletionToolChoiceOptionUnionParam {
-	// Handle string choices like "auto" or "none"
+	// Handle string choices like "auto", "none", or "required"
 	if strChoice, ok := toolChoice.(string); ok {
 		if strChoice == "auto" {
 			return openai.ChatCompletionToolChoiceOptionUnionParam{
@@ -383,6 +383,10 @@ func convertToOpenAIToolChoice(toolChoice any) openai.ChatCompletionToolChoiceOp
 		} else if strChoice == "none" {
 			return openai.ChatCompletionToolChoiceOptionUnionParam{
 				OfAuto: openai.String("none"),
+			}
+		} else if strChoice == "required" {
+			return openai.ChatCompletionToolChoiceOptionUnionParam{
+				OfAuto: openai.String("required"),
 			}
 		}
 	}

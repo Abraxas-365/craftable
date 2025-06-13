@@ -390,6 +390,13 @@ func (a *Agent) evaluateToolCalls(ctx context.Context, toolCalls []llm.ToolCall)
 
 	options := a.options
 	options = append(options, llm.WithToolChoice(nil))
+	if a.tools != nil {
+		toolList := a.getToolsList()
+		if len(toolList) > 0 {
+			options = append(options, llm.WithTools(toolList))
+			options = append(options, llm.WithToolChoice("auto"))
+		}
+	}
 
 	response, err := a.client.Chat(ctx, messages, options...)
 	if err != nil {

@@ -200,40 +200,25 @@ func (w *WhatsAppProvider) SetupWebhook(config msgx.WebhookConfig) error {
 
 	// WhatsApp webhook setup is typically done through the Facebook Developer Console
 	// This method can be used to validate the configuration
-
 	return nil
 }
 
 // HandleWebhook processes incoming webhook requests
 func (w *WhatsAppProvider) HandleWebhook(ctx context.Context, req *http.Request) (*msgx.IncomingMessage, error) {
-	// Handle verification challenge
+	// Handle verification challenge (GET request)
 	if req.Method == "GET" {
-		query := req.URL.Query()
-		mode := query.Get(modeParam)
-		token := query.Get(verifyTokenParam)
-		challenge := query.Get(challengeParam)
+		return w.handleVerificationChallenge(req)
+	}
 
-		if mode == "subscribe" && token == w.config.VerifyToken {
-			// For verification challenges, we need to return the challenge
-			// This should be handled at the HTTP handler level
-			// We'll return a special error that the webhook server can detect
-			return nil, &VerificationChallengeResponse{Challenge: challenge}
-		}
-
-		return nil, msgx.Registry.New(msgx.ErrWebhookVerificationFailed).
+	// Handle POST requests (actual messages)
+	if req.Method != "POST" {
+		return nil, msgx.Registry.New(msgx.ErrWebhookParseFailed).
 			WithDetail("provider", whatsappProvider).
-			WithDetail("reason", "Invalid verification token").
-			WithDetail("mode", mode).
-			WithDetail("token_provided", token != "").
-			WithDetail("challenge", challenge)
+			WithDetail("reason", "Invalid HTTP method").
+			WithDetail("method", req.Method)
 	}
 
-	// Verify webhook signature for POST requests
-	if err := w.VerifyWebhook(req); err != nil {
-		return nil, err
-	}
-
-	// Parse webhook body
+	// Read body once
 	body, err := io.ReadAll(req.Body)
 	if err != nil {
 		return nil, msgx.Registry.New(msgx.ErrWebhookParseFailed).
@@ -242,12 +227,70 @@ func (w *WhatsAppProvider) HandleWebhook(ctx context.Context, req *http.Request)
 			WithDetail("operation", "read_body")
 	}
 
+	// Log the raw webhook payload for debugging
+	logx.Debug("WhatsApp webhook raw payload: %s", string(body))
+
+	// Reset body for verification
+	req.Body = io.NopCloser(bytes.NewReader(body))
+
+	// Verify webhook signature
+	if err := w.verifyWebhookSignature(req, body); err != nil {
+		return nil, err
+	}
+
+	// Parse the webhook body
 	return w.ParseIncomingMessage(body)
 }
 
-// VerifyWebhook verifies the webhook signature
+// handleVerificationChallenge handles WhatsApp verification challenges
+func (w *WhatsAppProvider) handleVerificationChallenge(req *http.Request) (*msgx.IncomingMessage, error) {
+	query := req.URL.Query()
+	mode := query.Get(modeParam)
+	token := query.Get(verifyTokenParam)
+	challenge := query.Get(challengeParam)
+
+	logx.Debug("WhatsApp verification challenge - Mode: %s, Token provided: %t, Challenge: %s",
+		mode, token != "", challenge)
+
+	if mode == "subscribe" && token == w.config.VerifyToken {
+		// Return a special message indicating verification success
+		// The actual HTTP response should be handled at the handler level
+		return &msgx.IncomingMessage{
+			Provider: whatsappProvider,
+			Type:     "verification_challenge",
+			RawData:  map[string]any{"challenge": challenge},
+		}, nil
+	}
+
+	return nil, msgx.Registry.New(msgx.ErrWebhookVerificationFailed).
+		WithDetail("provider", whatsappProvider).
+		WithDetail("reason", "Invalid verification token").
+		WithDetail("mode", mode).
+		WithDetail("token_provided", token != "").
+		WithDetail("expected_token", w.config.VerifyToken).
+		WithDetail("challenge", challenge)
+}
+
+// VerifyWebhook verifies the webhook signature (kept for compatibility)
 func (w *WhatsAppProvider) VerifyWebhook(req *http.Request) error {
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		return msgx.Registry.New(msgx.ErrWebhookVerificationFailed).
+			WithCause(err).
+			WithDetail("provider", whatsappProvider).
+			WithDetail("operation", "read_body")
+	}
+
+	// Reset body
+	req.Body = io.NopCloser(bytes.NewReader(body))
+
+	return w.verifyWebhookSignature(req, body)
+}
+
+// verifyWebhookSignature verifies the webhook signature with body already read
+func (w *WhatsAppProvider) verifyWebhookSignature(req *http.Request, body []byte) error {
 	if w.config.WebhookSecret == "" {
+		logx.Debug("WhatsApp webhook signature verification skipped - no secret configured")
 		return nil // Skip verification if no secret configured
 	}
 
@@ -261,28 +304,20 @@ func (w *WhatsAppProvider) VerifyWebhook(req *http.Request) error {
 	// Remove "sha256=" prefix
 	signature = strings.TrimPrefix(signature, "sha256=")
 
-	body, err := io.ReadAll(req.Body)
-	if err != nil {
-		return msgx.Registry.New(msgx.ErrWebhookVerificationFailed).
-			WithCause(err).
-			WithDetail("provider", whatsappProvider).
-			WithDetail("operation", "read_body")
-	}
-
-	// Reset body for subsequent reads
-	req.Body = io.NopCloser(bytes.NewReader(body))
-
 	// Calculate expected signature
 	mac := hmac.New(sha256.New, []byte(w.config.WebhookSecret))
 	mac.Write(body)
 	expectedSignature := hex.EncodeToString(mac.Sum(nil))
 
 	if !hmac.Equal([]byte(signature), []byte(expectedSignature)) {
+		logx.Error("WhatsApp webhook signature verification failed - Expected: %s, Got: %s",
+			expectedSignature, signature)
 		return msgx.Registry.New(msgx.ErrWebhookVerificationFailed).
 			WithDetail("provider", whatsappProvider).
 			WithDetail("reason", "Invalid signature")
 	}
 
+	logx.Debug("WhatsApp webhook signature verification successful")
 	return nil
 }
 
@@ -296,48 +331,80 @@ func (w *WhatsAppProvider) ParseIncomingMessage(data []byte) (*msgx.IncomingMess
 			WithDetail("operation", "unmarshal_webhook")
 	}
 
+	// Pretty print for debugging
+	var prettyJSON bytes.Buffer
+	if err := json.Indent(&prettyJSON, data, "", "  "); err == nil {
+		logx.Debug("WhatsApp webhook parsed JSON:\n%s", prettyJSON.String())
+	}
+
 	// WhatsApp webhooks can contain multiple entries
 	for _, entry := range webhook.Entry {
+		logx.Debug("Processing entry ID: %s with %d changes", entry.ID, len(entry.Changes))
+
 		for _, change := range entry.Changes {
-			if change.Value.Messages != nil {
+			logx.Debug("Processing change field: %s", change.Field)
+
+			// Handle incoming messages
+			if change.Value.Messages != nil && len(change.Value.Messages) > 0 {
 				for _, msg := range change.Value.Messages {
-					return w.convertToIncomingMessage(msg, change.Value.Metadata), nil
+					logx.Debug("Processing message ID: %s, Type: %s, From: %s",
+						msg.ID, msg.Type, msg.From)
+
+					incomingMsg := w.convertToIncomingMessage(msg, change.Value.Metadata)
+					logx.Info("WhatsApp message received - ID: %s, From: %s, Type: %s",
+						incomingMsg.ID, incomingMsg.From, incomingMsg.Type)
+
+					return incomingMsg, nil
 				}
 			}
 
 			// Handle status updates
-			if change.Value.Statuses != nil {
+			if change.Value.Statuses != nil && len(change.Value.Statuses) > 0 {
+				logx.Debug("Received %d status updates, ignoring for incoming message processing",
+					len(change.Value.Statuses))
 				// Return nil for status updates as they're handled separately
 				return nil, nil
 			}
 		}
 	}
 
+	logx.Debug("No messages found in WhatsApp webhook")
 	return nil, nil
 }
 
-// ========== Helper Methods ==========
+// resolveMediaURL resolves media URL from media ID
+func (w *WhatsAppProvider) resolveMediaURL(ctx context.Context, mediaID string) (string, error) {
+	url := fmt.Sprintf("%s/%s", w.baseURL, mediaID)
 
-func (w *WhatsAppProvider) handleVerificationChallenge(req *http.Request) (*msgx.IncomingMessage, error) {
-	query := req.URL.Query()
-	mode := query.Get(modeParam)
-	token := query.Get(verifyTokenParam)
-	challenge := query.Get(challengeParam)
-
-	if mode == "subscribe" && token == w.config.VerifyToken {
-		// For WhatsApp verification, we need to echo back the challenge
-		// Since this function returns IncomingMessage, we'll handle the challenge differently
-		// The actual HTTP response should be handled at the webhook server level
-		return nil, nil
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return "", err
 	}
 
-	return nil, msgx.Registry.New(msgx.ErrWebhookVerificationFailed).
-		WithDetail("provider", whatsappProvider).
-		WithDetail("reason", "Invalid verification token").
-		WithDetail("mode", mode).
-		WithDetail("token_provided", token != "").
-		WithDetail("challenge", challenge)
+	req.Header.Set("Authorization", "Bearer "+w.config.AccessToken)
+
+	resp, err := w.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("failed to resolve media URL: %d", resp.StatusCode)
+	}
+
+	var mediaResp struct {
+		URL string `json:"url"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&mediaResp); err != nil {
+		return "", err
+	}
+
+	return mediaResp.URL, nil
 }
+
+// ========== Helper Methods ==========
 
 func (w *WhatsAppProvider) convertToWhatsAppMessage(msg msgx.Message) (*whatsappMessage, error) {
 	whatsappMsg := &whatsappMessage{
@@ -434,6 +501,10 @@ func (w *WhatsAppProvider) sendMessage(ctx context.Context, message *whatsappMes
 			WithDetail("operation", "marshal_message")
 	}
 
+	// Add debug logging
+	logx.Debug("Sending WhatsApp message to URL: %s", url)
+	logx.Debug("WhatsApp message payload: %s", string(jsonData))
+
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, msgx.Registry.New(msgx.ErrSendFailed).
@@ -453,6 +524,13 @@ func (w *WhatsAppProvider) sendMessage(ctx context.Context, message *whatsappMes
 			WithDetail("operation", "http_request")
 	}
 	defer resp.Body.Close()
+
+	// Log response for debugging
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	logx.Debug("WhatsApp API response status: %d, body: %s", resp.StatusCode, string(bodyBytes))
+
+	// Reset body for JSON decoding
+	resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, w.handleAPIError(resp)
@@ -519,6 +597,12 @@ func (w *WhatsAppProvider) cleanPhoneNumber(phoneNumber string) string {
 			cleaned += string(char)
 		}
 	}
+
+	// WhatsApp requires numbers WITHOUT the + prefix in the API
+	if strings.HasPrefix(cleaned, "+") {
+		cleaned = cleaned[1:]
+	}
+
 	return cleaned
 }
 
@@ -537,7 +621,6 @@ func (w *WhatsAppProvider) convertWhatsAppStatus(status string) msgx.MessageStat
 	}
 }
 
-// Updated convertToIncomingMessage function to handle string timestamps
 func (w *WhatsAppProvider) convertToIncomingMessage(msg whatsappIncomingMessage, metadata whatsappMetadata) *msgx.IncomingMessage {
 	// Parse timestamp from string to int64, then to time.Time
 	var timestamp time.Time
@@ -561,40 +644,70 @@ func (w *WhatsAppProvider) convertToIncomingMessage(msg whatsappIncomingMessage,
 		Type:      msgx.MessageType(msg.Type),
 		Timestamp: timestamp,
 		Content:   msgx.IncomingContent{},
+		RawData:   map[string]any{"whatsapp_message": msg, "metadata": metadata},
 	}
+
+	logx.Debug("Processing WhatsApp message type: %s", msg.Type)
 
 	// Handle different message types
 	switch msg.Type {
 	case "text":
-		incomingMsg.Content.Text = &msgx.IncomingTextContent{
-			Body: msg.Text.Body,
+		if msg.Text.Body != "" {
+			incomingMsg.Content.Text = &msgx.IncomingTextContent{
+				Body: msg.Text.Body,
+			}
+			logx.Debug("Text message body: %s", msg.Text.Body)
 		}
 
 	case "image":
+		mediaURL := msg.Image.Link
+		if mediaURL == "" && msg.Image.ID != "" {
+			logx.Debug("Image URL not provided, media ID: %s", msg.Image.ID)
+			// Note: You might need to resolve the media URL using the ID
+			// For now, we'll use the ID as a placeholder
+			mediaURL = fmt.Sprintf("whatsapp://media/%s", msg.Image.ID)
+		}
+
 		incomingMsg.Content.Media = &msgx.IncomingMediaContent{
-			URL:      msg.Image.Link,
+			URL:      mediaURL,
 			Caption:  msg.Image.Caption,
 			MimeType: msg.Image.MimeType,
 		}
+		logx.Debug("Image message - URL: %s, Caption: %s", mediaURL, msg.Image.Caption)
 
 	case "document":
+		mediaURL := msg.Document.Link
+		if mediaURL == "" && msg.Document.ID != "" {
+			mediaURL = fmt.Sprintf("whatsapp://media/%s", msg.Document.ID)
+		}
+
 		incomingMsg.Content.Media = &msgx.IncomingMediaContent{
-			URL:      msg.Document.Link,
+			URL:      mediaURL,
 			Caption:  msg.Document.Caption,
 			Filename: msg.Document.Filename,
 			MimeType: msg.Document.MimeType,
 		}
 
 	case "audio":
+		mediaURL := msg.Audio.Link
+		if mediaURL == "" && msg.Audio.ID != "" {
+			mediaURL = fmt.Sprintf("whatsapp://media/%s", msg.Audio.ID)
+		}
+
 		incomingMsg.Content.Media = &msgx.IncomingMediaContent{
-			URL:      msg.Audio.Link,
+			URL:      mediaURL,
 			Caption:  msg.Audio.Caption,
 			MimeType: msg.Audio.MimeType,
 		}
 
 	case "video":
+		mediaURL := msg.Video.Link
+		if mediaURL == "" && msg.Video.ID != "" {
+			mediaURL = fmt.Sprintf("whatsapp://media/%s", msg.Video.ID)
+		}
+
 		incomingMsg.Content.Media = &msgx.IncomingMediaContent{
-			URL:      msg.Video.Link,
+			URL:      mediaURL,
 			Caption:  msg.Video.Caption,
 			MimeType: msg.Video.MimeType,
 		}
@@ -617,6 +730,14 @@ func (w *WhatsAppProvider) convertToIncomingMessage(msg whatsappIncomingMessage,
 				incomingMsg.Content.Contact.PhoneNumber = contact.Phones[0].Phone
 			}
 		}
+
+	default:
+		logx.Warn("Unknown WhatsApp message type: %s", msg.Type)
+		// Set as text type for unknown messages
+		incomingMsg.Type = msgx.MessageTypeText
+		incomingMsg.Content.Text = &msgx.IncomingTextContent{
+			Body: fmt.Sprintf("Unsupported message type: %s", msg.Type),
+		}
 	}
 
 	// Add context if available
@@ -627,6 +748,120 @@ func (w *WhatsAppProvider) convertToIncomingMessage(msg whatsappIncomingMessage,
 	}
 
 	return incomingMsg
+}
+
+// ========== HTTP Handler ==========
+
+// WhatsAppWebhookHandler creates an HTTP handler for WhatsApp webhooks
+func WhatsAppWebhookHandler(provider *WhatsAppProvider, messageProcessor func(*msgx.IncomingMessage) error) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
+		// Add request logging
+		logx.Debug("WhatsApp webhook received - Method: %s, URL: %s", r.Method, r.URL.String())
+
+		if r.Method == "GET" {
+			// Handle verification challenge
+			query := r.URL.Query()
+			mode := query.Get("hub.mode")
+			token := query.Get("hub.verify_token")
+			challenge := query.Get("hub.challenge")
+
+			logx.Debug("Verification challenge - Mode: %s, Token provided: %t, Challenge: %s",
+				mode, token != "", challenge)
+
+			if mode == "subscribe" && token == provider.config.VerifyToken {
+				logx.Info("WhatsApp webhook verification successful")
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(challenge))
+				return
+			}
+
+			logx.Error("WhatsApp webhook verification failed - invalid token")
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+
+		if r.Method == "POST" {
+			// Handle incoming messages
+			incomingMsg, err := provider.HandleWebhook(ctx, r)
+			if err != nil {
+				logx.Error("WhatsApp webhook processing failed: %v", err)
+
+				// Still return 200 to WhatsApp to avoid retries for permanent failures
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte("ERROR"))
+				return
+			}
+
+			if incomingMsg != nil {
+				// Check if this is a verification challenge response
+				if incomingMsg.Type == "verification_challenge" {
+					if challenge, ok := incomingMsg.RawData["challenge"].(string); ok {
+						w.WriteHeader(http.StatusOK)
+						w.Write([]byte(challenge))
+						return
+					}
+				}
+
+				logx.Info("WhatsApp message received from %s: %s", incomingMsg.From, incomingMsg.Type)
+
+				// Process the incoming message
+				if messageProcessor != nil {
+					if err := messageProcessor(incomingMsg); err != nil {
+						logx.Error("Failed to process WhatsApp message: %v", err)
+					}
+				}
+
+				// Log message details
+				if incomingMsg.Content.Text != nil {
+					logx.Debug("Text message content: %s", incomingMsg.Content.Text.Body)
+				}
+			} else {
+				logx.Debug("WhatsApp webhook processed but no message returned (likely status update)")
+			}
+
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("OK"))
+			return
+		}
+
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+// DebugWhatsAppWebhook creates a debug handler to inspect webhook payloads
+func DebugWhatsAppWebhook() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" {
+			query := r.URL.Query()
+			challenge := query.Get("hub.challenge")
+			logx.Debug("Debug: WhatsApp verification challenge: %s", challenge)
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(challenge))
+			return
+		}
+
+		if r.Method == "POST" {
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+
+			logx.Debug("Raw WhatsApp webhook payload: %s", string(body))
+			logx.Debug("WhatsApp webhook headers: %+v", r.Header)
+
+			// Pretty print JSON
+			var prettyJSON bytes.Buffer
+			if err := json.Indent(&prettyJSON, body, "", "  "); err == nil {
+				logx.Debug("Pretty WhatsApp webhook JSON:\n%s", prettyJSON.String())
+			}
+
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("DEBUG_OK"))
+		}
+	}
 }
 
 // ========== WhatsApp API Structures ==========
@@ -728,15 +963,15 @@ type whatsappProfile struct {
 type whatsappIncomingMessage struct {
 	ID        string                    `json:"id"`
 	From      string                    `json:"from"`
-	Timestamp string                    `json:"timestamp"` // Changed from int64 to string
+	Timestamp string                    `json:"timestamp"`
 	Type      string                    `json:"type"`
-	Context   whatsappMessageContext    `json:"context,omitempty"`
-	Text      whatsappIncomingText      `json:"text,omitempty"`
-	Image     whatsappIncomingMedia     `json:"image,omitempty"`
-	Document  whatsappIncomingDocument  `json:"document,omitempty"`
-	Audio     whatsappIncomingMedia     `json:"audio,omitempty"`
-	Video     whatsappIncomingMedia     `json:"video,omitempty"`
-	Location  whatsappIncomingLocation  `json:"location,omitempty"`
+	Context   whatsappMessageContext    `json:"context"`
+	Text      whatsappIncomingText      `json:"text"`
+	Image     whatsappIncomingMedia     `json:"image"`
+	Document  whatsappIncomingDocument  `json:"document"`
+	Audio     whatsappIncomingMedia     `json:"audio"`
+	Video     whatsappIncomingMedia     `json:"video"`
+	Location  whatsappIncomingLocation  `json:"location"`
 	Contacts  []whatsappIncomingContact `json:"contacts,omitempty"`
 }
 
@@ -790,7 +1025,7 @@ type whatsappContactPhone struct {
 type whatsappStatus struct {
 	ID          string `json:"id"`
 	Status      string `json:"status"`
-	Timestamp   string `json:"timestamp"` // Changed from int64 to string
+	Timestamp   string `json:"timestamp"`
 	RecipientID string `json:"recipient_id"`
 }
 

@@ -1,76 +1,43 @@
 package main
 
 import (
-	"context"
-	"fmt"
 	"log"
-	"os"
+	"net/http"
 
-	"github.com/Abraxas-365/craftable/configx"
 	"github.com/Abraxas-365/craftable/msgx"
-	"github.com/Abraxas-365/craftable/msgx/providers/msgxtwilio"
+	"github.com/Abraxas-365/craftable/msgx/providers/msgxwhatsapp"
 )
 
 func main() {
-	// Set environment variables for demo
-	os.Setenv("TWILIO_ACCOUNT_SID", "SID")
-	os.Setenv("TWILIO_AUTH_TOKEN", "TOKEN")
-	os.Setenv("TWILIO_FROM_NUMBER", "+16198485487")
-	os.Setenv("TWILIO_TEST_PHONE_NUMBER", "+<numer>")
-
-	// Create configuration
-	config, err := configx.NewBuilder().
-		WithDefaults(map[string]any{
-			"twilio": map[string]any{
-				"api": map[string]any{
-					"version": "2010-04-01",
-				},
-				"http": map[string]any{
-					"timeout": 30,
-				},
-			},
-		}).
-		FromEnv("TWILIO_").
-		RequireEnv(
-			"TWILIO_ACCOUNT_SID",
-			"TWILIO_AUTH_TOKEN",
-			"TWILIO_FROM_NUMBER",
-			"TWILIO_TEST_PHONE_NUMBER",
-		).
-		Build()
-
-	if err != nil {
-		log.Fatalf("Configuration error: %s", err)
+	// Initialize WhatsApp provider
+	config := msgxwhatsapp.WhatsAppConfig{
+		PhoneNumberID: "your_phone_number_id",
+		AccessToken:   "your_access_token",
+		WebhookSecret: "your_webhook_secret",
+		VerifyToken:   "your_verify_token",
 	}
 
-	// Create Twilio provider using config
-	twilioProvider := msgxtwilio.NewTwilioProvider(msgxtwilio.TwilioConfig{
-		AccountSID:  config.Get("account.sid").AsString(),
-		AuthToken:   config.Get("auth.token").AsString(),
-		FromNumber:  config.Get("from.number").AsString(),
-		APIVersion:  config.Get("api.version").AsString(),
-		HTTPTimeout: config.Get("http.timeout").AsInt(),
-	})
+	provider := msgxwhatsapp.NewWhatsAppProvider(config)
 
-	// Send a simple message
-	ctx := context.Background()
-	message := msgx.Message{
-		To:   config.Get("test.phone.number").AsString(),
-		Type: msgx.MessageTypeText,
-		Content: msgx.Content{
-			Text: &msgx.TextContent{
-				Body: "Hello from Twilio SMS with configx! 🚀",
-			},
-		},
+	// Message processor function
+	messageProcessor := func(msg *msgx.IncomingMessage) error {
+		log.Printf("Received message from %s: %s", msg.From, msg.Type)
+
+		if msg.Content.Text != nil {
+			log.Printf("Text: %s", msg.Content.Text.Body)
+		}
+
+		// Add your message processing logic here
+		return nil
 	}
 
-	response, err := twilioProvider.Send(ctx, message)
-	if err != nil {
-		log.Fatalf("Failed to send message: %v", err)
-	}
+	// Set up webhook handler
+	http.HandleFunc("/webhook/whatsapp", msgxwhatsapp.WhatsAppWebhookHandler(provider, messageProcessor))
 
-	fmt.Printf("✅ Message sent successfully!\n")
-	fmt.Printf("Message ID: %s\n", response.MessageID)
-	fmt.Printf("Status: %s\n", response.Status)
-	fmt.Printf("To: %s\n", response.To)
+	// Optional: Debug handler
+	http.HandleFunc("/webhook/whatsapp/debug", msgxwhatsapp.DebugWhatsAppWebhook())
+
+	log.Println("Server starting on :8080")
+	log.Fatal(http.ListenAndServe(":8080", nil))
 }
+

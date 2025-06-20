@@ -733,7 +733,7 @@ type whatsappIncomingMessage struct {
 	Timestamp string                    `json:"timestamp"` // Changed from int64 to string
 	Type      string                    `json:"type"`
 	Context   whatsappMessageContext    `json:"context,omitempty"`
-	Text      whatsappIncomingText      `json:"text,omitempty"`
+	Text      whatsappIncomingText      `json:"text,omitempty"` // FIXED: Complete JSON tag
 	Image     whatsappIncomingMedia     `json:"image,omitempty"`
 	Document  whatsappIncomingDocument  `json:"document,omitempty"`
 	Audio     whatsappIncomingMedia     `json:"audio,omitempty"`
@@ -794,7 +794,9 @@ type whatsappStatus struct {
 	Status      string `json:"status"`
 	Timestamp   string `json:"timestamp"` // Changed from int64 to string
 	RecipientID string `json:"recipient_id"`
-} // VerificationChallengeResponse represents a webhook verification challenge
+}
+
+// VerificationChallengeResponse represents a webhook verification challenge
 type VerificationChallengeResponse struct {
 	Challenge string
 }

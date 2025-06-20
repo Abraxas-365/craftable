@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Abraxas-365/craftable/logx"
 	"github.com/Abraxas-365/craftable/msgx"
 )
 
@@ -535,26 +537,40 @@ func (w *WhatsAppProvider) convertWhatsAppStatus(status string) msgx.MessageStat
 	}
 }
 
+// Updated convertToIncomingMessage function to handle string timestamps
 func (w *WhatsAppProvider) convertToIncomingMessage(msg whatsappIncomingMessage, metadata whatsappMetadata) *msgx.IncomingMessage {
+	// Parse timestamp from string to int64, then to time.Time
+	var timestamp time.Time
+	if msg.Timestamp != "" {
+		if timestampInt, err := strconv.ParseInt(msg.Timestamp, 10, 64); err == nil {
+			timestamp = time.Unix(timestampInt, 0)
+		} else {
+			// Fallback to current time if parsing fails
+			timestamp = time.Now()
+			logx.Warn("Failed to parse WhatsApp timestamp '%s': %v", msg.Timestamp, err)
+		}
+	} else {
+		timestamp = time.Now()
+	}
+
 	incomingMsg := &msgx.IncomingMessage{
 		ID:        msg.ID,
 		Provider:  whatsappProvider,
 		From:      msg.From,
 		To:        metadata.PhoneNumberID,
-		Timestamp: time.Unix(msg.Timestamp, 0),
-		RawData:   map[string]any{"whatsapp_message": msg},
+		Type:      msgx.MessageType(msg.Type),
+		Timestamp: timestamp,
+		Content:   msgx.IncomingContent{},
 	}
 
-	// Convert content based on message type
+	// Handle different message types
 	switch msg.Type {
 	case "text":
-		incomingMsg.Type = msgx.MessageTypeText
 		incomingMsg.Content.Text = &msgx.IncomingTextContent{
 			Body: msg.Text.Body,
 		}
 
 	case "image":
-		incomingMsg.Type = msgx.MessageTypeImage
 		incomingMsg.Content.Media = &msgx.IncomingMediaContent{
 			URL:      msg.Image.Link,
 			Caption:  msg.Image.Caption,
@@ -562,7 +578,6 @@ func (w *WhatsAppProvider) convertToIncomingMessage(msg whatsappIncomingMessage,
 		}
 
 	case "document":
-		incomingMsg.Type = msgx.MessageTypeDocument
 		incomingMsg.Content.Media = &msgx.IncomingMediaContent{
 			URL:      msg.Document.Link,
 			Caption:  msg.Document.Caption,
@@ -571,14 +586,13 @@ func (w *WhatsAppProvider) convertToIncomingMessage(msg whatsappIncomingMessage,
 		}
 
 	case "audio":
-		incomingMsg.Type = msgx.MessageTypeAudio
 		incomingMsg.Content.Media = &msgx.IncomingMediaContent{
 			URL:      msg.Audio.Link,
+			Caption:  msg.Audio.Caption,
 			MimeType: msg.Audio.MimeType,
 		}
 
 	case "video":
-		incomingMsg.Type = msgx.MessageTypeVideo
 		incomingMsg.Content.Media = &msgx.IncomingMediaContent{
 			URL:      msg.Video.Link,
 			Caption:  msg.Video.Caption,
@@ -702,11 +716,13 @@ type whatsappMetadata struct {
 	PhoneNumberID      string `json:"phone_number_id"`
 }
 
+// Fixed: JSON tag should be lowercase "profile"
 type whatsappContact struct {
 	Profile whatsappProfile `json:"profile"`
 	WaID    string          `json:"wa_id"`
 }
 
+// Fixed: JSON tag should be lowercase "name"
 type whatsappProfile struct {
 	Name string `json:"name"`
 }
@@ -714,21 +730,21 @@ type whatsappProfile struct {
 type whatsappIncomingMessage struct {
 	ID        string                    `json:"id"`
 	From      string                    `json:"from"`
-	Timestamp int64                     `json:"timestamp"`
+	Timestamp string                    `json:"timestamp"` // Changed from int64 to string
 	Type      string                    `json:"type"`
-	Context   whatsappMessageContext    `json:"context"`
-	Text      whatsappIncomingText      `json:"text"`
-	Image     whatsappIncomingMedia     `json:"image"`
-	Document  whatsappIncomingDocument  `json:"document"`
-	Audio     whatsappIncomingMedia     `json:"audio"`
-	Video     whatsappIncomingMedia     `json:"video"`
-	Location  whatsappIncomingLocation  `json:"location"`
+	Context   whatsappMessageContext    `json:"context,omitempty"`
+	Text      whatsappIncomingText      `json:"text,omitempty"`
+	Image     whatsappIncomingMedia     `json:"image,omitempty"`
+	Document  whatsappIncomingDocument  `json:"document,omitempty"`
+	Audio     whatsappIncomingMedia     `json:"audio,omitempty"`
+	Video     whatsappIncomingMedia     `json:"video,omitempty"`
+	Location  whatsappIncomingLocation  `json:"location,omitempty"`
 	Contacts  []whatsappIncomingContact `json:"contacts,omitempty"`
 }
 
 type whatsappMessageContext struct {
-	From      string `json:"from"`
-	ID        string `json:"id"`
+	From      string `json:"from,omitempty"`
+	ID        string `json:"id,omitempty"`
 	Referred  bool   `json:"referred,omitempty"`
 	Forwarded bool   `json:"forwarded,omitempty"`
 }
@@ -776,11 +792,9 @@ type whatsappContactPhone struct {
 type whatsappStatus struct {
 	ID          string `json:"id"`
 	Status      string `json:"status"`
-	Timestamp   int64  `json:"timestamp"`
+	Timestamp   string `json:"timestamp"` // Changed from int64 to string
 	RecipientID string `json:"recipient_id"`
-}
-
-// VerificationChallengeResponse represents a webhook verification challenge
+} // VerificationChallengeResponse represents a webhook verification challenge
 type VerificationChallengeResponse struct {
 	Challenge string
 }

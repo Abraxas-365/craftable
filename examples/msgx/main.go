@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -16,52 +15,18 @@ import (
 	"github.com/Abraxas-365/craftable/msgx/providers/msgxwhatsapp"
 )
 
-func main() {
-	// Initialize WhatsApp provider
-	config := msgxwhatsapp.WhatsAppConfig{
-		PhoneNumberID: "your_phone_number_id",
-		AccessToken:   "your_access_token",
-		WebhookSecret: "your_webhook_secret",
-		VerifyToken:   "your_verify_token",
-	}
+// TestSignatureGeneration helps debug signature issues
+func TestSignatureGeneration(secret, payload string) {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(payload))
+	signature := hex.EncodeToString(mac.Sum(nil))
 
-	provider := msgxwhatsapp.NewWhatsAppProvider(config)
-
-	// Message processor function
-	messageProcessor := func(msg *msgx.IncomingMessage) error {
-		log.Printf("Received message from %s: %s", msg.From, msg.Type)
-
-		if msg.Content.Text != nil {
-			log.Printf("Text: %s", msg.Content.Text.Body)
-		}
-
-		// Add your message processing logic here
-		return nil
-	}
-
-	// Set up webhook handler
-	http.HandleFunc("/webhook/whatsapp", msgxwhatsapp.WhatsAppWebhookHandler(provider, messageProcessor))
-
-	// Debug handler with signature verification testing
-	http.HandleFunc("/webhook/whatsapp/debug", DebugWhatsAppWebhookWithSignature(config.WebhookSecret))
-
-	// Verification endpoint for testing
-	http.HandleFunc("/webhook/whatsapp/verify", VerifyWebhookHandler(config))
-
-	// Health check endpoint
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-	})
-
-	log.Println("Server starting on :8080")
-	log.Println("Endpoints available:")
-	log.Println("  - GET  /webhook/whatsapp/verify  - Test webhook verification")
-	log.Println("  - POST /webhook/whatsapp/debug   - Debug webhook payloads")
-	log.Println("  - GET|POST /webhook/whatsapp     - Production webhook")
-	log.Println("  - GET  /health                   - Health check")
-
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	log.Printf("=== Signature Test ===")
+	log.Printf("Secret: '%s'", secret)
+	log.Printf("Payload: '%s'", payload)
+	log.Printf("Generated signature: %s", signature)
+	log.Printf("Full header: sha256=%s", signature)
+	log.Printf("========================")
 }
 
 // VerifyWebhookHandler creates a handler to test webhook verification
@@ -272,16 +237,104 @@ func logWebhookStructure(data interface{}, indent string) {
 	}
 }
 
-// TestSignature is a utility function to test signature generation
-func TestSignature(secret, payload string) {
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(payload))
-	signature := hex.EncodeToString(mac.Sum(nil))
+func main() {
+	// Initialize WhatsApp provider
+	config := msgxwhatsapp.WhatsAppConfig{
+		PhoneNumberID: "your_phone_number_id",
+		AccessToken:   "your_access_token",
+		WebhookSecret: "your_webhook_secret", // Set to "" to disable verification temporarily
+		VerifyToken:   "your_verify_token",
+	}
 
-	fmt.Printf("Test Signature Generation:\n")
-	fmt.Printf("  Secret: %s\n", secret)
-	fmt.Printf("  Payload: %s\n", payload)
-	fmt.Printf("  Signature: %s\n", signature)
-	fmt.Printf("  Header format: sha256=%s\n", signature)
+	// Test signature generation with sample data
+	TestSignatureGeneration(config.WebhookSecret, `{"test":"payload"}`)
+
+	provider := msgxwhatsapp.NewWhatsAppProvider(config)
+
+	// Message processor function
+	messageProcessor := func(msg *msgx.IncomingMessage) error {
+		log.Printf("Received message from %s: %s", msg.From, msg.Type)
+
+		if msg.Content.Text != nil {
+			log.Printf("Text: %s", msg.Content.Text.Body)
+		}
+
+		// Add your message processing logic here
+		return nil
+	}
+
+	// Enhanced debug handler
+	http.HandleFunc("/webhook/whatsapp/debug", DebugWhatsAppWebhookWithSignature(config.WebhookSecret))
+
+	// Set up webhook handler
+	http.HandleFunc("/webhook/whatsapp", msgxwhatsapp.WhatsAppWebhookHandler(provider, messageProcessor))
+
+	// Verification endpoint for testing
+	http.HandleFunc("/webhook/whatsapp/verify", VerifyWebhookHandler(config))
+
+	// Simple test endpoint to verify signature manually
+	http.HandleFunc("/test-signature", func(w http.ResponseWriter, r *http.Request) {
+		secret := r.URL.Query().Get("secret")
+		payload := r.URL.Query().Get("payload")
+
+		if secret == "" || payload == "" {
+			http.Error(w, "Missing secret or payload query params", http.StatusBadRequest)
+			return
+		}
+
+		TestSignatureGeneration(secret, payload)
+		w.Write([]byte("Check logs for signature"))
+	})
+
+	// Health check endpoint
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	})
+
+	// No-verification debug endpoint
+	http.HandleFunc("/webhook/whatsapp/no-verify", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" {
+			challenge := r.URL.Query().Get("hub.challenge")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(challenge))
+			return
+		}
+
+		if r.Method == "POST" {
+			// Create a temporary provider with no webhook secret
+			tempConfig := config
+			tempConfig.WebhookSecret = ""
+			tempProvider := msgxwhatsapp.NewWhatsAppProvider(tempConfig)
+
+			incomingMsg, err := tempProvider.HandleWebhook(r.Context(), r)
+			if err != nil {
+				log.Printf("Error processing webhook: %v", err)
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+
+			if incomingMsg != nil {
+				log.Printf("Message received (no verification): %+v", incomingMsg)
+				if messageProcessor != nil {
+					messageProcessor(incomingMsg)
+				}
+			}
+
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("OK"))
+		}
+	})
+
+	log.Println("Server starting on :8080")
+	log.Println("Endpoints available:")
+	log.Println("  - GET|POST /webhook/whatsapp          - Production webhook")
+	log.Println("  - GET|POST /webhook/whatsapp/debug    - Debug webhook")
+	log.Println("  - GET|POST /webhook/whatsapp/verify   - Test verification")
+	log.Println("  - GET|POST /webhook/whatsapp/no-verify - Skip signature verification")
+	log.Println("  - GET      /test-signature            - Test signature generation")
+	log.Println("  - GET      /health                    - Health check")
+
+	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 

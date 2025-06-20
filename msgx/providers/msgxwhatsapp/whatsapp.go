@@ -218,7 +218,7 @@ func (w *WhatsAppProvider) HandleWebhook(ctx context.Context, req *http.Request)
 			WithDetail("method", req.Method)
 	}
 
-	// Read body once
+	// Read body once and store it
 	body, err := io.ReadAll(req.Body)
 	if err != nil {
 		return nil, msgx.Registry.New(msgx.ErrWebhookParseFailed).
@@ -228,17 +228,14 @@ func (w *WhatsAppProvider) HandleWebhook(ctx context.Context, req *http.Request)
 	}
 
 	// Log the raw webhook payload for debugging
-	logx.Debug("WhatsApp webhook raw payload: %s", string(body))
+	logx.Debug("WhatsApp webhook raw payload (%d bytes): %s", len(body), string(body))
 
-	// Reset body for verification
-	req.Body = io.NopCloser(bytes.NewReader(body))
-
-	// Verify webhook signature
+	// Verify webhook signature using the exact body bytes we just read
 	if err := w.verifyWebhookSignature(req, body); err != nil {
 		return nil, err
 	}
 
-	// Parse the webhook body
+	// Parse the webhook body using the same bytes
 	return w.ParseIncomingMessage(body)
 }
 
@@ -301,20 +298,48 @@ func (w *WhatsAppProvider) verifyWebhookSignature(req *http.Request, body []byte
 			WithDetail("reason", "Missing signature header")
 	}
 
+	// Log for debugging
+	logx.Debug("WhatsApp signature verification:")
+	logx.Debug("  Webhook secret: '%s'", w.config.WebhookSecret)
+	logx.Debug("  Body length: %d bytes", len(body))
+	logx.Debug("  Raw body: %s", string(body))
+	logx.Debug("  Received signature header: %s", signature)
+
 	// Remove "sha256=" prefix
 	signature = strings.TrimPrefix(signature, "sha256=")
+	logx.Debug("  Signature without prefix: %s", signature)
 
-	// Calculate expected signature
+	// Calculate expected signature using the EXACT body bytes
 	mac := hmac.New(sha256.New, []byte(w.config.WebhookSecret))
 	mac.Write(body)
 	expectedSignature := hex.EncodeToString(mac.Sum(nil))
 
+	logx.Debug("  Expected signature: %s", expectedSignature)
+
 	if !hmac.Equal([]byte(signature), []byte(expectedSignature)) {
 		logx.Error("WhatsApp webhook signature verification failed - Expected: %s, Got: %s",
 			expectedSignature, signature)
+
+		// Additional debugging - let's try with different approaches
+		logx.Debug("Debug signature verification attempts:")
+
+		// Try with string conversion
+		mac2 := hmac.New(sha256.New, []byte(w.config.WebhookSecret))
+		mac2.Write([]byte(string(body)))
+		expectedSignature2 := hex.EncodeToString(mac2.Sum(nil))
+		logx.Debug("  With string conversion: %s", expectedSignature2)
+
+		// Check if there are any character encoding issues
+		logx.Debug("  Body as hex: %x", body)
+		logx.Debug("  Secret as hex: %x", w.config.WebhookSecret)
+
 		return msgx.Registry.New(msgx.ErrWebhookVerificationFailed).
 			WithDetail("provider", whatsappProvider).
-			WithDetail("reason", "Invalid signature")
+			WithDetail("reason", "Invalid signature").
+			WithDetail("expected", expectedSignature).
+			WithDetail("received", signature).
+			WithDetail("body_length", len(body)).
+			WithDetail("secret_length", len(w.config.WebhookSecret))
 	}
 
 	logx.Debug("WhatsApp webhook signature verification successful")

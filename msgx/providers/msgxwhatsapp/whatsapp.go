@@ -11,9 +11,11 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Abraxas-365/craftable/logx"
 	"github.com/Abraxas-365/craftable/msgx"
 )
 
@@ -208,7 +210,7 @@ func (w *WhatsAppProvider) HandleWebhook(ctx context.Context, req *http.Request)
 	return w.ParseIncomingMessage(body)
 }
 
-// VerifyWebhook verifies the webhook signature
+// VerifyWebhook verifies the webhook signature according to WhatsApp Cloud API spec
 func (w *WhatsAppProvider) VerifyWebhook(req *http.Request) error {
 	if w.config.WebhookSecret == "" {
 		return nil // Skip verification if no secret configured
@@ -221,7 +223,7 @@ func (w *WhatsAppProvider) VerifyWebhook(req *http.Request) error {
 			WithDetail("reason", "Missing signature header")
 	}
 
-	// Read body
+	// Read body once and preserve it
 	body, err := io.ReadAll(req.Body)
 	if err != nil {
 		return msgx.Registry.New(msgx.ErrWebhookVerificationFailed).
@@ -230,20 +232,173 @@ func (w *WhatsAppProvider) VerifyWebhook(req *http.Request) error {
 			WithDetail("operation", "read_body")
 	}
 
-	// Restore body
+	// Restore body for subsequent processing
 	req.Body = io.NopCloser(bytes.NewReader(body))
+
+	// Extract hex signature (remove "sha256=" prefix if present)
+	expectedSigHex := signature
+	if strings.HasPrefix(signature, "sha256=") {
+		expectedSigHex = signature[7:] // Remove "sha256=" prefix
+	}
+
+	// Calculate HMAC-SHA256 signature
+	mac := hmac.New(sha256.New, []byte(w.config.WebhookSecret))
+	mac.Write(body)
+	calculatedSigHex := hex.EncodeToString(mac.Sum(nil))
+
+	// Secure comparison of hex strings
+	if !hmac.Equal([]byte(expectedSigHex), []byte(calculatedSigHex)) {
+		return msgx.Registry.New(msgx.ErrWebhookVerificationFailed).
+			WithDetail("provider", whatsappProvider).
+			WithDetail("reason", "Invalid signature").
+			WithDetail("received", expectedSigHex).
+			WithDetail("calculated", calculatedSigHex).
+			WithDetail("body_length", len(body)).
+			WithDetail("secret_length", len(w.config.WebhookSecret))
+	}
+
+	return nil
+}
+
+// Alternative implementation with even more robust handling
+func (w *WhatsAppProvider) VerifyWebhookRobust(req *http.Request) error {
+	if w.config.WebhookSecret == "" {
+		return nil // Skip verification if no secret configured
+	}
+
+	// Get signature header
+	signature := req.Header.Get(whatsappSignatureHeader)
+	if signature == "" {
+		return msgx.Registry.New(msgx.ErrWebhookVerificationFailed).
+			WithDetail("provider", whatsappProvider).
+			WithDetail("reason", "Missing X-Hub-Signature-256 header")
+	}
+
+	// Read raw body bytes
+	rawBody, err := io.ReadAll(req.Body)
+	if err != nil {
+		return msgx.Registry.New(msgx.ErrWebhookVerificationFailed).
+			WithCause(err).
+			WithDetail("provider", whatsappProvider).
+			WithDetail("operation", "read_body")
+	}
+
+	// Restore body for subsequent processing
+	req.Body = io.NopCloser(bytes.NewReader(rawBody))
+
+	// Validate signature format and extract hex
+	var receivedSigHex string
+	if strings.HasPrefix(signature, "sha256=") {
+		receivedSigHex = signature[7:]
+	} else {
+		// Some implementations may send just the hex without prefix
+		receivedSigHex = signature
+	}
+
+	// Validate hex format
+	if len(receivedSigHex) != 64 {
+		return msgx.Registry.New(msgx.ErrWebhookVerificationFailed).
+			WithDetail("provider", whatsappProvider).
+			WithDetail("reason", "Invalid signature format").
+			WithDetail("signature_length", len(receivedSigHex))
+	}
+
+	// Decode received signature to verify it's valid hex
+	receivedSigBytes, err := hex.DecodeString(receivedSigHex)
+	if err != nil {
+		return msgx.Registry.New(msgx.ErrWebhookVerificationFailed).
+			WithCause(err).
+			WithDetail("provider", whatsappProvider).
+			WithDetail("reason", "Invalid hex signature")
+	}
 
 	// Calculate expected signature
 	mac := hmac.New(sha256.New, []byte(w.config.WebhookSecret))
-	mac.Write(body)
-	expectedSignature := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	mac.Write(rawBody)
+	expectedSigBytes := mac.Sum(nil)
 
-	if !hmac.Equal([]byte(signature), []byte(expectedSignature)) {
+	// Compare signatures using constant-time comparison
+	if !hmac.Equal(receivedSigBytes, expectedSigBytes) {
 		return msgx.Registry.New(msgx.ErrWebhookVerificationFailed).
 			WithDetail("provider", whatsappProvider).
-			WithDetail("reason", "Invalid signature")
+			WithDetail("reason", "HMAC signature mismatch").
+			WithDetail("received_hex", receivedSigHex).
+			WithDetail("expected_hex", hex.EncodeToString(expectedSigBytes)).
+			WithDetail("body_length", len(rawBody)).
+			WithDetail("secret_length", len(w.config.WebhookSecret)).
+			WithDetail("webhook_secret_preview", w.config.WebhookSecret[:min(8, len(w.config.WebhookSecret))]+"...")
 	}
 
+	return nil
+}
+
+// Debug version for troubleshooting
+func (w *WhatsAppProvider) VerifyWebhookDebug(req *http.Request) error {
+	if w.config.WebhookSecret == "" {
+		fmt.Printf("[DEBUG] Webhook verification skipped - no secret configured\n")
+		return nil
+	}
+
+	// Log all headers for debugging
+	fmt.Printf("[DEBUG] Request headers:\n")
+	for k, v := range req.Header {
+		fmt.Printf("  %s: %s\n", k, strings.Join(v, ", "))
+	}
+
+	signature := req.Header.Get(whatsappSignatureHeader)
+	fmt.Printf("[DEBUG] Signature header (%s): %s\n", whatsappSignatureHeader, signature)
+
+	if signature == "" {
+		return msgx.Registry.New(msgx.ErrWebhookVerificationFailed).
+			WithDetail("provider", whatsappProvider).
+			WithDetail("reason", "Missing signature header")
+	}
+
+	// Read body
+	rawBody, err := io.ReadAll(req.Body)
+	if err != nil {
+		return msgx.Registry.New(msgx.ErrWebhookVerificationFailed).
+			WithCause(err).
+			WithDetail("provider", whatsappProvider).
+			WithDetail("operation", "read_body")
+	}
+
+	fmt.Printf("[DEBUG] Body length: %d bytes\n", len(rawBody))
+	fmt.Printf("[DEBUG] Body preview: %s\n", string(rawBody[:min(200, len(rawBody))]))
+	fmt.Printf("[DEBUG] Webhook secret length: %d\n", len(w.config.WebhookSecret))
+
+	// Restore body
+	req.Body = io.NopCloser(bytes.NewReader(rawBody))
+
+	// Process signature
+	var sigHex string
+	if strings.HasPrefix(signature, "sha256=") {
+		sigHex = signature[7:]
+		fmt.Printf("[DEBUG] Stripped 'sha256=' prefix, hex: %s\n", sigHex)
+	} else {
+		sigHex = signature
+		fmt.Printf("[DEBUG] Using signature as-is: %s\n", sigHex)
+	}
+
+	// Calculate expected signature
+	mac := hmac.New(sha256.New, []byte(w.config.WebhookSecret))
+	mac.Write(rawBody)
+	expectedHex := hex.EncodeToString(mac.Sum(nil))
+
+	fmt.Printf("[DEBUG] Calculated signature: %s\n", expectedHex)
+	fmt.Printf("[DEBUG] Received signature:   %s\n", sigHex)
+	fmt.Printf("[DEBUG] Signatures match: %t\n", hmac.Equal([]byte(sigHex), []byte(expectedHex)))
+
+	// Verify
+	if !hmac.Equal([]byte(sigHex), []byte(expectedHex)) {
+		return msgx.Registry.New(msgx.ErrWebhookVerificationFailed).
+			WithDetail("provider", whatsappProvider).
+			WithDetail("reason", "Signature mismatch").
+			WithDetail("received", sigHex).
+			WithDetail("expected", expectedHex)
+	}
+
+	fmt.Printf("[DEBUG] Webhook verification successful!\n")
 	return nil
 }
 
@@ -486,12 +641,17 @@ func (w *WhatsAppProvider) handleAPIError(resp *http.Response) error {
 }
 
 func (w *WhatsAppProvider) convertWhatsAppMessage(message whatsappIncomingMessage, metadata whatsappMetadata) (*msgx.IncomingMessage, error) {
+	tsInt, err := strconv.ParseInt(message.Timestamp, 10, 64)
+	if err != nil {
+		logx.Error("Invalid timestamp:", err)
+		tsInt = 0
+	}
 	incomingMsg := &msgx.IncomingMessage{
 		ID:        message.ID,
 		Provider:  whatsappProvider,
 		From:      message.From,
 		To:        metadata.PhoneNumberID,
-		Timestamp: time.Unix(message.Timestamp, 0),
+		Timestamp: time.Unix(tsInt, 0),
 		Type:      msgx.MessageTypeText, // Default
 		RawData:   map[string]any{"whatsapp_message": message},
 	}
@@ -724,7 +884,7 @@ type whatsappProfile struct {
 type whatsappIncomingMessage struct {
 	From      string                    `json:"from"`
 	ID        string                    `json:"id"`
-	Timestamp int64                     `json:"timestamp"`
+	Timestamp string                    `json:"timestamp"`
 	Type      string                    `json:"type"`
 	Context   *whatsappMessageContext   `json:"context,omitempty"`
 	Text      *whatsappIncomingText     `json:"text,omitempty"`
@@ -849,4 +1009,3 @@ type whatsappPricing struct {
 	PricingModel string `json:"pricing_model"`
 	Category     string `json:"category"`
 }
-

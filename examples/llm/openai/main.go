@@ -39,6 +39,7 @@ func main() {
 		mem,
 		agentx.WithTools(tools),
 		agentx.WithOptions(
+			llm.WithToolChoice("required"),
 			// llm.WithModel("gpt-4o"),
 			llm.WithMaxTokens(500),
 			llm.WithTemperature(0.7),

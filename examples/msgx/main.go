@@ -1,8 +1,16 @@
 package main
 
 import (
+	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/Abraxas-365/craftable/msgx"
 	"github.com/Abraxas-365/craftable/msgx/providers/msgxwhatsapp"
@@ -31,41 +39,14 @@ func main() {
 		return nil
 	}
 
-	// Set up webhook handler (handles both verification and messages)
+	// Set up webhook handler
 	http.HandleFunc("/webhook/whatsapp", msgxwhatsapp.WhatsAppWebhookHandler(provider, messageProcessor))
 
-	// Optional: Debug handler
-	http.HandleFunc("/webhook/whatsapp/debug", msgxwhatsapp.DebugWhatsAppWebhook())
+	// Debug handler with signature verification testing
+	http.HandleFunc("/webhook/whatsapp/debug", DebugWhatsAppWebhookWithSignature(config.WebhookSecret))
 
-	// Manual verification endpoint for testing
-	http.HandleFunc("/webhook/whatsapp/verify", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("Verification request received - Method: %s", r.Method)
-		log.Printf("Query parameters: %v", r.URL.Query())
-
-		if r.Method == "GET" {
-			mode := r.URL.Query().Get("hub.mode")
-			token := r.URL.Query().Get("hub.verify_token")
-			challenge := r.URL.Query().Get("hub.challenge")
-
-			log.Printf("Verification details - Mode: %s, Token: %s, Challenge: %s", mode, token, challenge)
-			log.Printf("Expected token: %s", config.VerifyToken)
-
-			if mode == "subscribe" && token == config.VerifyToken {
-				log.Println("✅ Webhook verification successful!")
-				w.WriteHeader(http.StatusOK)
-				w.Write([]byte(challenge))
-				return
-			}
-
-			log.Println("❌ Webhook verification failed - token mismatch")
-			w.WriteHeader(http.StatusForbidden)
-			w.Write([]byte("Forbidden"))
-			return
-		}
-
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		w.Write([]byte("Method not allowed"))
-	})
+	// Verification endpoint for testing
+	http.HandleFunc("/webhook/whatsapp/verify", VerifyWebhookHandler(config))
 
 	// Health check endpoint
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -73,103 +54,234 @@ func main() {
 		w.Write([]byte("OK"))
 	})
 
-	// Root endpoint with instructions
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		html := `
-<!DOCTYPE html>
-<html>
-<head>
-    <title>WhatsApp Webhook Server</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 40px; }
-        .endpoint { background: #f5f5f5; padding: 10px; margin: 10px 0; border-radius: 5px; }
-        .code { background: #e8e8e8; padding: 5px; font-family: monospace; }
-    </style>
-</head>
-<body>
-    <h1>WhatsApp Webhook Server</h1>
-    <p>Server is running and ready to receive webhooks.</p>
-    
-    <h2>Available Endpoints:</h2>
-    
-    <div class="endpoint">
-        <h3>Main Webhook Endpoint</h3>
-        <div class="code">POST/GET /webhook/whatsapp</div>
-        <p>Use this URL in your Facebook Developer Console for webhook configuration.</p>
-    </div>
-    
-    <div class="endpoint">
-        <h3>Manual Verification Endpoint</h3>
-        <div class="code">GET /webhook/whatsapp/verify</div>
-        <p>Test webhook verification manually with parameters:</p>
-        <ul>
-            <li><code>hub.mode=subscribe</code></li>
-            <li><code>hub.verify_token=your_verify_token</code></li>
-            <li><code>hub.challenge=test_challenge</code></li>
-        </ul>
-        <p>Example: <a href="/webhook/whatsapp/verify?hub.mode=subscribe&hub.verify_token=your_verify_token&hub.challenge=test123">/webhook/whatsapp/verify?hub.mode=subscribe&hub.verify_token=your_verify_token&hub.challenge=test123</a></p>
-    </div>
-    
-    <div class="endpoint">
-        <h3>Debug Endpoint</h3>
-        <div class="code">POST/GET /webhook/whatsapp/debug</div>
-        <p>Logs all incoming webhook data for debugging purposes.</p>
-    </div>
-    
-    <div class="endpoint">
-        <h3>Health Check</h3>
-        <div class="code">GET /health</div>
-        <p>Simple health check endpoint.</p>
-    </div>
-    
-    <h2>Configuration:</h2>
-    <ul>
-        <li><strong>Phone Number ID:</strong> ` + config.PhoneNumberID + `</li>
-        <li><strong>Verify Token:</strong> ` + config.VerifyToken + `</li>
-        <li><strong>Webhook Secret:</strong> ` + (func() string {
-			if config.WebhookSecret != "" {
-				return "✅ Configured"
-			}
-			return "❌ Not configured"
-		})() + `</li>
-    </ul>
-    
-    <h2>Testing Steps:</h2>
-    <ol>
-        <li>Test the manual verification endpoint first</li>
-        <li>Configure the webhook URL in Facebook Developer Console</li>
-        <li>Send a test message to your WhatsApp Business number</li>
-        <li>Check the server logs for incoming messages</li>
-    </ol>
-</body>
-</html>`
-		w.Header().Set("Content-Type", "text/html")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(html))
-	})
-
-	log.Println("🚀 WhatsApp Webhook Server starting on :8080")
-	log.Printf("📞 Phone Number ID: %s", config.PhoneNumberID)
-	log.Printf("🔑 Verify Token: %s", config.VerifyToken)
-	log.Printf("🔐 Webhook Secret: %s", func() string {
-		if config.WebhookSecret != "" {
-			return "✅ Configured"
-		}
-		return "❌ Not configured"
-	}())
-	log.Println("")
-	log.Println("📍 Available endpoints:")
-	log.Println("   Main webhook:        http://localhost:8080/webhook/whatsapp")
-	log.Println("   Manual verification: http://localhost:8080/webhook/whatsapp/verify")
-	log.Println("   Debug endpoint:      http://localhost:8080/webhook/whatsapp/debug")
-	log.Println("   Health check:        http://localhost:8080/health")
-	log.Println("   Instructions:        http://localhost:8080/")
-	log.Println("")
-	log.Println("🔍 To test verification manually, visit:")
-	log.Printf("   http://localhost:8080/webhook/whatsapp/verify?hub.mode=subscribe&hub.verify_token=%s&hub.challenge=test123", config.VerifyToken)
-	log.Println("")
-	log.Println("⚡ Server ready! Waiting for webhooks...")
+	log.Println("Server starting on :8080")
+	log.Println("Endpoints available:")
+	log.Println("  - GET  /webhook/whatsapp/verify  - Test webhook verification")
+	log.Println("  - POST /webhook/whatsapp/debug   - Debug webhook payloads")
+	log.Println("  - GET|POST /webhook/whatsapp     - Production webhook")
+	log.Println("  - GET  /health                   - Health check")
 
 	log.Fatal(http.ListenAndServe(":8080", nil))
+}
+
+// VerifyWebhookHandler creates a handler to test webhook verification
+func VerifyWebhookHandler(config msgxwhatsapp.WhatsAppConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case "GET":
+			// Test verification challenge
+			mode := r.URL.Query().Get("hub.mode")
+			token := r.URL.Query().Get("hub.verify_token")
+			challenge := r.URL.Query().Get("hub.challenge")
+
+			log.Printf("Verification request:")
+			log.Printf("  Mode: %s", mode)
+			log.Printf("  Token: %s", token)
+			log.Printf("  Challenge: %s", challenge)
+			log.Printf("  Expected token: %s", config.VerifyToken)
+
+			if mode == "subscribe" && token == config.VerifyToken {
+				log.Printf("✅ Verification successful!")
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(challenge))
+				return
+			}
+
+			log.Printf("❌ Verification failed!")
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte("Verification failed"))
+
+		case "POST":
+			// Test signature verification
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				http.Error(w, "Failed to read body", http.StatusBadRequest)
+				return
+			}
+
+			signature := r.Header.Get("X-Hub-Signature-256")
+			log.Printf("Signature verification test:")
+			log.Printf("  Received signature: %s", signature)
+			log.Printf("  Body length: %d bytes", len(body))
+			log.Printf("  Body: %s", string(body))
+
+			if config.WebhookSecret == "" {
+				log.Printf("⚠️  No webhook secret configured - skipping verification")
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte("OK - No secret configured"))
+				return
+			}
+
+			if signature == "" {
+				log.Printf("❌ No signature header found")
+				w.WriteHeader(http.StatusBadRequest)
+				w.Write([]byte("No signature header"))
+				return
+			}
+
+			// Remove "sha256=" prefix
+			signature = strings.TrimPrefix(signature, "sha256=")
+
+			// Calculate expected signature
+			mac := hmac.New(sha256.New, []byte(config.WebhookSecret))
+			mac.Write(body)
+			expectedSignature := hex.EncodeToString(mac.Sum(nil))
+
+			log.Printf("  Expected signature: %s", expectedSignature)
+			log.Printf("  Webhook secret: %s", config.WebhookSecret)
+
+			if hmac.Equal([]byte(signature), []byte(expectedSignature)) {
+				log.Printf("✅ Signature verification successful!")
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte("Signature valid"))
+			} else {
+				log.Printf("❌ Signature verification failed!")
+				w.WriteHeader(http.StatusUnauthorized)
+				w.Write([]byte("Invalid signature"))
+			}
+
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+// DebugWhatsAppWebhookWithSignature creates a debug handler with signature verification
+func DebugWhatsAppWebhookWithSignature(webhookSecret string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("=== WhatsApp Webhook Debug ===")
+		log.Printf("Method: %s", r.Method)
+		log.Printf("URL: %s", r.URL.String())
+		log.Printf("Headers:")
+		for name, values := range r.Header {
+			for _, value := range values {
+				log.Printf("  %s: %s", name, value)
+			}
+		}
+
+		if r.Method == "GET" {
+			// Handle verification challenge
+			query := r.URL.Query()
+			mode := query.Get("hub.mode")
+			token := query.Get("hub.verify_token")
+			challenge := query.Get("hub.challenge")
+
+			log.Printf("GET Parameters:")
+			log.Printf("  hub.mode: %s", mode)
+			log.Printf("  hub.verify_token: %s", token)
+			log.Printf("  hub.challenge: %s", challenge)
+
+			if challenge != "" {
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(challenge))
+			} else {
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte("Debug GET OK"))
+			}
+			return
+		}
+
+		if r.Method == "POST" {
+			// Read body
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				log.Printf("Error reading body: %v", err)
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+
+			log.Printf("Raw body (%d bytes): %s", len(body), string(body))
+
+			// Pretty print JSON if possible
+			var prettyJSON bytes.Buffer
+			if err := json.Indent(&prettyJSON, body, "", "  "); err == nil {
+				log.Printf("Pretty JSON:\n%s", prettyJSON.String())
+			}
+
+			// Test signature verification if secret is provided
+			if webhookSecret != "" {
+				signature := r.Header.Get("X-Hub-Signature-256")
+				log.Printf("Signature verification:")
+				log.Printf("  Received: %s", signature)
+
+				if signature != "" {
+					// Remove "sha256=" prefix
+					signature = strings.TrimPrefix(signature, "sha256=")
+
+					// Calculate expected signature
+					mac := hmac.New(sha256.New, []byte(webhookSecret))
+					mac.Write(body)
+					expectedSignature := hex.EncodeToString(mac.Sum(nil))
+
+					log.Printf("  Expected: %s", expectedSignature)
+					log.Printf("  Secret: %s", webhookSecret)
+
+					if hmac.Equal([]byte(signature), []byte(expectedSignature)) {
+						log.Printf("  Result: ✅ VALID")
+					} else {
+						log.Printf("  Result: ❌ INVALID")
+					}
+				} else {
+					log.Printf("  No signature header found")
+				}
+			}
+
+			// Parse webhook structure
+			var webhook map[string]interface{}
+			if err := json.Unmarshal(body, &webhook); err == nil {
+				log.Printf("Webhook structure:")
+				logWebhookStructure(webhook, "  ")
+			}
+
+			log.Printf("=== End Debug ===")
+
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("DEBUG_OK"))
+		}
+	}
+}
+
+// logWebhookStructure recursively logs the webhook structure
+func logWebhookStructure(data interface{}, indent string) {
+	switch v := data.(type) {
+	case map[string]interface{}:
+		for key, value := range v {
+			log.Printf("%s%s:", indent, key)
+			logWebhookStructure(value, indent+"  ")
+		}
+	case []interface{}:
+		log.Printf("%s[array with %d items]", indent, len(v))
+		for i, item := range v {
+			log.Printf("%s[%d]:", indent, i)
+			logWebhookStructure(item, indent+"  ")
+		}
+	case string:
+		if len(v) > 100 {
+			log.Printf("%s\"%s...\" (truncated, full length: %d)", indent, v[:100], len(v))
+		} else {
+			log.Printf("%s\"%s\"", indent, v)
+		}
+	case float64:
+		log.Printf("%s%g", indent, v)
+	case bool:
+		log.Printf("%s%t", indent, v)
+	case nil:
+		log.Printf("%snull", indent)
+	default:
+		log.Printf("%s%v (type: %T)", indent, v, v)
+	}
+}
+
+// TestSignature is a utility function to test signature generation
+func TestSignature(secret, payload string) {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(payload))
+	signature := hex.EncodeToString(mac.Sum(nil))
+
+	fmt.Printf("Test Signature Generation:\n")
+	fmt.Printf("  Secret: %s\n", secret)
+	fmt.Printf("  Payload: %s\n", payload)
+	fmt.Printf("  Signature: %s\n", signature)
+	fmt.Printf("  Header format: sha256=%s\n", signature)
 }
 

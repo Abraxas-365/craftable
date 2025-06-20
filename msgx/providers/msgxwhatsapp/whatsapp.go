@@ -716,13 +716,11 @@ type whatsappMetadata struct {
 	PhoneNumberID      string `json:"phone_number_id"`
 }
 
-// Fixed: JSON tag should be lowercase "profile"
 type whatsappContact struct {
 	Profile whatsappProfile `json:"profile"`
 	WaID    string          `json:"wa_id"`
 }
 
-// Fixed: JSON tag should be lowercase "name"
 type whatsappProfile struct {
 	Name string `json:"name"`
 }
@@ -733,7 +731,7 @@ type whatsappIncomingMessage struct {
 	Timestamp string                    `json:"timestamp"` // Changed from int64 to string
 	Type      string                    `json:"type"`
 	Context   whatsappMessageContext    `json:"context,omitempty"`
-	Text      whatsappIncomingText      `json:"text,omitempty"` // FIXED: Complete JSON tag
+	Text      whatsappIncomingText      `json:"text,omitempty"`
 	Image     whatsappIncomingMedia     `json:"image,omitempty"`
 	Document  whatsappIncomingDocument  `json:"document,omitempty"`
 	Audio     whatsappIncomingMedia     `json:"audio,omitempty"`

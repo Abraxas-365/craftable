@@ -23,26 +23,69 @@ const (
 	whatsappAPIURL          = "https://graph.facebook.com"
 	whatsappProvider        = "whatsapp"
 	whatsappSignatureHeader = "X-Hub-Signature-256"
-	whatsappAPIVersion      = "v23.0" // Updated to latest version
+	whatsappAPIVersion      = "v23.0"
 )
+
+// ========== Template API Structures ==========
+
+// TemplateFromAPI represents template structure from WhatsApp API
+type TemplateFromAPI struct {
+	Name       string                     `json:"name"`
+	Language   string                     `json:"language"`
+	Status     string                     `json:"status"`
+	Category   string                     `json:"category"`
+	ID         string                     `json:"id"`
+	Components []TemplateComponentFromAPI `json:"components"`
+}
+
+type TemplateComponentFromAPI struct {
+	Type    string           `json:"type"`             // HEADER, BODY, FOOTER, BUTTONS
+	Format  string           `json:"format,omitempty"` // TEXT, IMAGE, VIDEO, DOCUMENT
+	Text    string           `json:"text,omitempty"`
+	Example *TemplateExample `json:"example,omitempty"`
+	Buttons []TemplateButton `json:"buttons,omitempty"`
+}
+
+type TemplateExample struct {
+	HeaderText []string   `json:"header_text,omitempty"`
+	BodyText   [][]string `json:"body_text,omitempty"`
+}
+
+type TemplateButton struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+	URL  string `json:"url,omitempty"`
+}
+
+// TemplateCache holds cached template data
+type TemplateCache struct {
+	Template  TemplateFromAPI `json:"template"`
+	ExpiresAt time.Time       `json:"expires_at"`
+}
+
+// ========== Configuration ==========
 
 // WhatsAppConfig holds WhatsApp Business API configuration
 type WhatsAppConfig struct {
-	AccessToken   string `json:"access_token" validate:"required"`
-	PhoneNumberID string `json:"phone_number_id" validate:"required"`
-	BusinessID    string `json:"business_id,omitempty"`
-	WebhookSecret string `json:"webhook_secret,omitempty"`
-	VerifyToken   string `json:"verify_token,omitempty"`
-	APIVersion    string `json:"api_version,omitempty"`
-	HTTPTimeout   int    `json:"http_timeout,omitempty"`
-	MaxRetries    int    `json:"max_retries,omitempty"`
+	AccessToken       string `json:"access_token" validate:"required"`
+	PhoneNumberID     string `json:"phone_number_id" validate:"required"`
+	BusinessAccountID string `json:"business_account_id" validate:"required"` // Required for template API
+	WebhookSecret     string `json:"webhook_secret,omitempty"`
+	VerifyToken       string `json:"verify_token,omitempty"`
+	APIVersion        string `json:"api_version,omitempty"`
+	HTTPTimeout       int    `json:"http_timeout,omitempty"`
+	MaxRetries        int    `json:"max_retries,omitempty"`
+	CacheTemplates    bool   `json:"cache_templates,omitempty"`    // Cache templates to avoid repeated API calls
+	TemplateCacheTTL  int    `json:"template_cache_ttl,omitempty"` // Cache TTL in minutes
 }
 
 // WhatsAppProvider implements the msgx.Provider interface
 type WhatsAppProvider struct {
-	config     WhatsAppConfig
-	httpClient *http.Client
-	baseURL    string
+	config         WhatsAppConfig
+	httpClient     *http.Client
+	baseURL        string
+	businessAPIURL string
+	templateCache  map[string]TemplateCache
 }
 
 // NewWhatsAppProvider creates a new WhatsApp provider
@@ -56,14 +99,157 @@ func NewWhatsAppProvider(config WhatsAppConfig) *WhatsAppProvider {
 	if config.MaxRetries == 0 {
 		config.MaxRetries = 3
 	}
+	if config.TemplateCacheTTL == 0 {
+		config.TemplateCacheTTL = 60 // 1 hour default
+	}
 
 	return &WhatsAppProvider{
 		config: config,
 		httpClient: &http.Client{
 			Timeout: time.Duration(config.HTTPTimeout) * time.Second,
 		},
-		baseURL: fmt.Sprintf("%s/%s/%s", whatsappAPIURL, config.APIVersion, config.PhoneNumberID),
+		baseURL:        fmt.Sprintf("%s/%s/%s", whatsappAPIURL, config.APIVersion, config.PhoneNumberID),
+		businessAPIURL: fmt.Sprintf("%s/%s/%s", whatsappAPIURL, config.APIVersion, config.BusinessAccountID),
+		templateCache:  make(map[string]TemplateCache),
 	}
+}
+
+// ========== Template API Methods ==========
+
+// GetTemplate fetches template from WhatsApp API
+func (w *WhatsAppProvider) GetTemplate(ctx context.Context, templateName, language string) (*TemplateFromAPI, error) {
+	// Check cache first
+	if w.config.CacheTemplates {
+		cacheKey := fmt.Sprintf("%s_%s", templateName, language)
+		if cached, exists := w.templateCache[cacheKey]; exists && time.Now().Before(cached.ExpiresAt) {
+			return &cached.Template, nil
+		}
+	}
+
+	// Fetch from API
+	url := fmt.Sprintf("%s/message_templates?name=%s&language=%s", w.businessAPIURL, templateName, language)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+w.config.AccessToken)
+
+	resp, err := w.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch template: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(body))
+	}
+
+	var templateResponse struct {
+		Data []TemplateFromAPI `json:"data"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&templateResponse); err != nil {
+		return nil, fmt.Errorf("failed to decode template response: %w", err)
+	}
+
+	if len(templateResponse.Data) == 0 {
+		return nil, fmt.Errorf("template not found: %s_%s", templateName, language)
+	}
+
+	template := templateResponse.Data[0]
+
+	// Cache the template
+	if w.config.CacheTemplates {
+		cacheKey := fmt.Sprintf("%s_%s", templateName, language)
+		w.templateCache[cacheKey] = TemplateCache{
+			Template:  template,
+			ExpiresAt: time.Now().Add(time.Duration(w.config.TemplateCacheTTL) * time.Minute),
+		}
+	}
+
+	return &template, nil
+}
+
+// ResolveTemplateFromAPI resolves template content using API-fetched template
+func (w *WhatsAppProvider) ResolveTemplateFromAPI(ctx context.Context, templateContent *msgx.TemplateContent) (*msgx.ResolvedContent, error) {
+	// Fetch template from API
+	template, err := w.GetTemplate(ctx, templateContent.Name, templateContent.Language)
+	if err != nil {
+		// Return basic resolved content if API fetch fails
+		return &msgx.ResolvedContent{
+			TemplateName:    templateContent.Name,
+			Language:        templateContent.Language,
+			Parameters:      templateContent.Parameters,
+			ParameterCount:  len(templateContent.Parameters),
+			ResolvedMessage: fmt.Sprintf("Template: %s (Language: %s) [API fetch failed: %v]", templateContent.Name, templateContent.Language, err),
+		}, nil
+	}
+
+	resolved := &msgx.ResolvedContent{
+		TemplateName:   templateContent.Name,
+		Language:       templateContent.Language,
+		Parameters:     templateContent.Parameters,
+		ParameterCount: len(templateContent.Parameters),
+	}
+
+	// Process template components
+	var header, body, footer string
+	var resolvedHeader, resolvedBody, resolvedFooter string
+
+	for _, component := range template.Components {
+		switch component.Type {
+		case "HEADER":
+			header = component.Text
+			resolvedHeader = w.resolveTemplateText(component.Text, templateContent.Parameters)
+		case "BODY":
+			body = component.Text
+			resolvedBody = w.resolveTemplateText(component.Text, templateContent.Parameters)
+		case "FOOTER":
+			footer = component.Text
+			resolvedFooter = component.Text // Footer usually doesn't have parameters
+		}
+	}
+
+	// Set resolved content
+	resolved.Header = header
+	resolved.OriginalBody = body
+	resolved.Footer = footer
+	resolved.ResolvedBody = resolvedBody
+
+	// Create complete resolved message
+	var fullMessage strings.Builder
+	if resolvedHeader != "" {
+		fullMessage.WriteString(resolvedHeader + "\n\n")
+	}
+	if resolvedBody != "" {
+		fullMessage.WriteString(resolvedBody)
+	}
+	if resolvedFooter != "" {
+		fullMessage.WriteString("\n\n" + resolvedFooter)
+	}
+
+	resolved.ResolvedMessage = fullMessage.String()
+
+	return resolved, nil
+}
+
+// resolveTemplateText replaces parameters in template text
+func (w *WhatsAppProvider) resolveTemplateText(text string, parameters map[string]any) string {
+	if len(parameters) == 0 {
+		return text
+	}
+
+	resolved := text
+	for key, value := range parameters {
+		// Replace numbered parameters {{1}}, {{2}}, etc.
+		placeholder := fmt.Sprintf("{{%s}}", key)
+		resolved = strings.ReplaceAll(resolved, placeholder, fmt.Sprintf("%v", value))
+	}
+
+	return resolved
 }
 
 // ========== Sender Interface Implementation ==========
@@ -85,7 +271,8 @@ func (w *WhatsAppProvider) Send(ctx context.Context, message msgx.Message) (*msg
 		return nil, err
 	}
 
-	return &msgx.Response{
+	// Build the response
+	msgxResponse := &msgx.Response{
 		MessageID: response.Messages[0].ID,
 		Provider:  whatsappProvider,
 		To:        message.To,
@@ -95,7 +282,20 @@ func (w *WhatsAppProvider) Send(ctx context.Context, message msgx.Message) (*msg
 			"whatsapp_id": response.Messages[0].ID,
 			"wa_id":       response.Contacts[0].WaID,
 		},
-	}, nil
+	}
+
+	// For template messages, fetch template from API and resolve content
+	if message.Type == msgx.MessageTypeTemplate && message.Content.Template != nil {
+		resolvedContent, err := w.ResolveTemplateFromAPI(ctx, message.Content.Template)
+		if err == nil {
+			msgxResponse.ResolvedContent = resolvedContent
+		} else {
+			// Add error info to provider data
+			msgxResponse.ProviderData["template_resolution_error"] = err.Error()
+		}
+	}
+
+	return msgxResponse, nil
 }
 
 // SendBulk sends multiple messages
@@ -904,7 +1104,7 @@ type whatsappMessageContext struct {
 			CatalogID         string `json:"catalog_id"`
 			ProductRetailerID string `json:"product_retailer_id"`
 		} `json:"product"`
-	} `json:"referred,omitempty"`
+	} `json:"referred"`
 }
 
 type whatsappIncomingText struct {
@@ -938,7 +1138,7 @@ type whatsappIncomingContact struct {
 	Birthday  string                   `json:"birthday,omitempty"`
 	Emails    []whatsappContactEmail   `json:"emails,omitempty"`
 	Name      whatsappContactName      `json:"name"`
-	Org       whatsappContactOrg       `json:"org,omitempty"`
+	Org       whatsappContactOrg       `json:"org"`
 	Phones    []whatsappContactPhone   `json:"phones,omitempty"`
 	URLs      []whatsappContactURL     `json:"urls,omitempty"`
 }

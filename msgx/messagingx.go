@@ -129,13 +129,27 @@ const (
 
 // Response represents the response from sending a message
 type Response struct {
-	MessageID    string         `json:"message_id"`
-	Provider     string         `json:"provider"`
-	To           string         `json:"to"`
-	Status       MessageStatus  `json:"status"`
-	Cost         *Cost          `json:"cost,omitempty"`
-	Timestamp    time.Time      `json:"timestamp"`
-	ProviderData map[string]any `json:"provider_data,omitempty"`
+	MessageID       string           `json:"message_id"`
+	Provider        string           `json:"provider"`
+	To              string           `json:"to"`
+	Status          MessageStatus    `json:"status"`
+	Cost            *Cost            `json:"cost,omitempty"`
+	Timestamp       time.Time        `json:"timestamp"`
+	ProviderData    map[string]any   `json:"provider_data,omitempty"`
+	ResolvedContent *ResolvedContent `json:"resolved_content,omitempty"` // Add this
+}
+
+// ResolvedContent holds the resolved template information
+type ResolvedContent struct {
+	TemplateName    string         `json:"template_name"`
+	Language        string         `json:"language"`
+	OriginalBody    string         `json:"original_body,omitempty"`
+	ResolvedBody    string         `json:"resolved_body"`
+	ResolvedMessage string         `json:"resolved_message"`
+	Parameters      map[string]any `json:"parameters,omitempty"`
+	Header          string         `json:"header,omitempty"`
+	Footer          string         `json:"footer,omitempty"`
+	ParameterCount  int            `json:"parameter_count"`
 }
 
 // BulkResponse for bulk operations

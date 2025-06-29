@@ -1209,3 +1209,183 @@ type whatsappPricing struct {
 	PricingModel string `json:"pricing_model"`
 	Category     string `json:"category"`
 }
+
+type whatsappTypingMessage struct {
+	MessagingProduct string `json:"messaging_product"`
+	RecipientType    string `json:"recipient_type,omitempty"`
+	To               string `json:"to"`
+	Type             string `json:"type"` // "typing_on" or "typing_off"
+}
+
+// Response structure for typing indicator (same as regular send response)
+type whatsappTypingResponse struct {
+	MessagingProduct string                    `json:"messaging_product"`
+	Contacts         []whatsappContact         `json:"contacts"`
+	Messages         []whatsappMessageResponse `json:"messages"`
+}
+
+func (w *WhatsAppProvider) SendTypingIndicator(ctx context.Context, to string, isTyping bool) error {
+	typingType := "typing_on"
+	if !isTyping {
+		typingType = "typing_off"
+	}
+
+	// Validate phone number format
+	cleanedTo := w.cleanPhoneNumber(to)
+	if !w.isValidPhoneFormat(cleanedTo) {
+		return msgx.Registry.New(msgx.ErrInvalidMessage).
+			WithDetail("provider", whatsappProvider).
+			WithDetail("phone_number", to).
+			WithDetail("cleaned", cleanedTo).
+			WithDetail("reason", "Invalid phone number format")
+	}
+
+	// Create typing indicator message
+	typingMsg := whatsappTypingMessage{
+		MessagingProduct: "whatsapp",
+		RecipientType:    "individual",
+		To:               cleanedTo,
+		Type:             typingType,
+	}
+
+	// Send the typing indicator
+	_, err := w.sendTypingIndicator(ctx, typingMsg)
+	if err != nil {
+		return msgx.Registry.New(msgx.ErrSendFailed).
+			WithCause(err).
+			WithDetail("provider", whatsappProvider).
+			WithDetail("operation", "send_typing_indicator").
+			WithDetail("to", cleanedTo).
+			WithDetail("typing_type", typingType)
+	}
+
+	return nil
+}
+
+// StartTyping sends "typing_on" indicator
+func (w *WhatsAppProvider) StartTyping(ctx context.Context, to string) error {
+	return w.SendTypingIndicator(ctx, to, true)
+}
+
+// StopTyping sends "typing_off" indicator
+func (w *WhatsAppProvider) StopTyping(ctx context.Context, to string) error {
+	return w.SendTypingIndicator(ctx, to, false)
+}
+
+// SendTypingWithDuration sends typing indicator for a specific duration
+func (w *WhatsAppProvider) SendTypingWithDuration(ctx context.Context, to string, duration time.Duration) error {
+	// Start typing
+	if err := w.StartTyping(ctx, to); err != nil {
+		return err
+	}
+
+	// Wait for the specified duration (max 30 seconds as per WhatsApp limits)
+	maxDuration := 30 * time.Second
+	if duration > maxDuration {
+		duration = maxDuration
+	}
+
+	select {
+	case <-ctx.Done():
+		// Context cancelled, still try to stop typing
+		_ = w.StopTyping(context.Background(), to)
+		return ctx.Err()
+	case <-time.After(duration):
+		// Duration elapsed, stop typing
+		return w.StopTyping(ctx, to)
+	}
+}
+
+// sendTypingIndicator handles the actual HTTP request for typing indicators
+func (w *WhatsAppProvider) sendTypingIndicator(ctx context.Context, typingMsg whatsappTypingMessage) (*whatsappTypingResponse, error) {
+	// Marshal the typing message
+	payload, err := json.Marshal(typingMsg)
+	if err != nil {
+		return nil, msgx.Registry.New(msgx.ErrSendFailed).
+			WithCause(err).
+			WithDetail("provider", whatsappProvider).
+			WithDetail("operation", "marshal_typing_payload")
+	}
+
+	// Create the request URL (same endpoint as regular messages)
+	url := fmt.Sprintf("%s/messages", w.baseURL)
+
+	// Create HTTP request
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(payload))
+	if err != nil {
+		return nil, msgx.Registry.New(msgx.ErrSendFailed).
+			WithCause(err).
+			WithDetail("provider", whatsappProvider).
+			WithDetail("operation", "create_typing_request")
+	}
+
+	// Set headers (same pattern as regular messages)
+	req.Header.Set("Authorization", "Bearer "+w.config.AccessToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	// Execute the request
+	resp, err := w.httpClient.Do(req)
+	if err != nil {
+		return nil, msgx.Registry.New(msgx.ErrSendFailed).
+			WithCause(err).
+			WithDetail("provider", whatsappProvider).
+			WithDetail("operation", "http_typing_request")
+	}
+	defer resp.Body.Close()
+
+	// Check response status
+	if resp.StatusCode != http.StatusOK {
+		return nil, w.handleAPIError(resp)
+	}
+
+	// Parse response
+	var typingResp whatsappTypingResponse
+	if err := json.NewDecoder(resp.Body).Decode(&typingResp); err != nil {
+		return nil, msgx.Registry.New(msgx.ErrSendFailed).
+			WithCause(err).
+			WithDetail("provider", whatsappProvider).
+			WithDetail("operation", "decode_typing_response")
+	}
+
+	return &typingResp, nil
+}
+
+// ========== Helper Methods for Enhanced Messaging ==========
+
+// SendWithTyping sends a message with typing indicator simulation
+func (w *WhatsAppProvider) SendWithTyping(ctx context.Context, message msgx.Message, typingDuration time.Duration) (*msgx.Response, error) {
+	// Start typing indicator
+	if err := w.StartTyping(ctx, message.To); err != nil {
+		// Log the error but don't fail the message send
+		logx.Error("Failed to send typing indicator before message: %v", err)
+	}
+
+	// Wait for typing duration
+	if typingDuration > 0 {
+		maxDuration := 30 * time.Second
+		if typingDuration > maxDuration {
+			typingDuration = maxDuration
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(typingDuration):
+			// Continue to send message
+		}
+	}
+
+	// Send the actual message
+	response, err := w.Send(ctx, message)
+
+	// Stop typing indicator (fire and forget)
+	go func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if stopErr := w.StopTyping(stopCtx, message.To); stopErr != nil {
+			logx.Error("Failed to stop typing indicator after message: %v", stopErr)
+		}
+	}()
+
+	return response, err
+}

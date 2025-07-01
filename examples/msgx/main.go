@@ -257,13 +257,13 @@ func NewWhatsAppService(config ServiceConfig) (*WhatsAppService, error) {
 
 	// Create WhatsApp provider
 	whatsappConfig := msgxwhatsapp.WhatsAppConfig{
-		AccessToken:   config.WhatsApp.AccessToken,
-		PhoneNumberID: config.WhatsApp.PhoneNumberID,
-		BusinessID:    config.WhatsApp.BusinessID,
-		WebhookSecret: config.WhatsApp.WebhookSecret,
-		VerifyToken:   config.WhatsApp.VerifyToken,
-		APIVersion:    config.WhatsApp.APIVersion,
-		HTTPTimeout:   config.WhatsApp.HTTPTimeout,
+		AccessToken:       config.WhatsApp.AccessToken,
+		PhoneNumberID:     config.WhatsApp.PhoneNumberID,
+		BusinessAccountID: config.WhatsApp.BusinessID,
+		WebhookSecret:     config.WhatsApp.WebhookSecret,
+		VerifyToken:       config.WhatsApp.VerifyToken,
+		APIVersion:        config.WhatsApp.APIVersion,
+		HTTPTimeout:       config.WhatsApp.HTTPTimeout,
 	}
 
 	provider := msgxwhatsapp.NewWhatsAppProvider(whatsappConfig)

@@ -181,37 +181,6 @@ func (w *WhatsAppProvider) GetTemplate(ctx context.Context, templateName, langua
 	return &template, nil
 }
 
-// extractParametersFromText extracts parameters from template text in order of appearance
-func (w *WhatsAppProvider) extractParametersFromText(templateText string, parameterValues map[string]any) []whatsappTemplateParameter {
-	if templateText == "" || len(parameterValues) == 0 {
-		return nil
-	}
-
-	// Extract variables in order of appearance
-	re := regexp.MustCompile(`\{\{([^{}]+)\}\}`)
-	matches := re.FindAllStringSubmatch(templateText, -1)
-
-	var parameters []whatsappTemplateParameter
-	seen := make(map[string]bool)
-
-	for _, match := range matches {
-		if len(match) > 1 {
-			variable := strings.TrimSpace(match[1])
-			if !seen[variable] {
-				if value, exists := parameterValues[variable]; exists {
-					parameters = append(parameters, whatsappTemplateParameter{
-						Type: "text",
-						Text: fmt.Sprintf("%v", value),
-					})
-					seen[variable] = true
-				}
-			}
-		}
-	}
-
-	return parameters
-}
-
 // buildTemplateComponentsForNamed handles NAMED parameter templates
 func (w *WhatsAppProvider) buildTemplateComponentsForNamed(ctx context.Context, templateContent *msgx.TemplateContent) ([]whatsappTemplateComponent, error) {
 	// For NAMED parameter templates, we need to fetch the template structure
@@ -219,6 +188,7 @@ func (w *WhatsAppProvider) buildTemplateComponentsForNamed(ctx context.Context, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch template structure: %w", err)
 	}
+	w.debugTemplateStructure(template, templateContent)
 
 	var components []whatsappTemplateComponent
 
@@ -227,7 +197,7 @@ func (w *WhatsAppProvider) buildTemplateComponentsForNamed(ctx context.Context, 
 		switch apiComponent.Type {
 		case "HEADER":
 			if apiComponent.Format == "TEXT" && apiComponent.Text != "" {
-				headerParams := w.extractParametersFromText(apiComponent.Text, templateContent.Parameters)
+				headerParams := w.extractNamedParametersInOrder(apiComponent.Text, templateContent.Parameters)
 				if len(headerParams) > 0 {
 					component := whatsappTemplateComponent{
 						Type:       "header",
@@ -239,7 +209,7 @@ func (w *WhatsAppProvider) buildTemplateComponentsForNamed(ctx context.Context, 
 
 		case "BODY":
 			if apiComponent.Text != "" {
-				bodyParams := w.extractParametersFromText(apiComponent.Text, templateContent.Parameters)
+				bodyParams := w.extractNamedParametersInOrder(apiComponent.Text, templateContent.Parameters)
 				if len(bodyParams) > 0 {
 					component := whatsappTemplateComponent{
 						Type:       "body",
@@ -252,6 +222,69 @@ func (w *WhatsAppProvider) buildTemplateComponentsForNamed(ctx context.Context, 
 	}
 
 	return components, nil
+}
+
+// extractNamedParametersInOrder extracts named parameters in the order they appear in the template
+func (w *WhatsAppProvider) extractNamedParametersInOrder(templateText string, parameterValues map[string]any) []whatsappTemplateParameter {
+	if templateText == "" || len(parameterValues) == 0 {
+		return nil
+	}
+
+	// For NAMED templates, extract parameters in order of appearance
+	// Pattern matches: {{1}} or {{name}} or {{career}}
+	re := regexp.MustCompile(`\{\{([^{}]+)\}\}`)
+	matches := re.FindAllStringSubmatch(templateText, -1)
+
+	var parameters []whatsappTemplateParameter
+	seen := make(map[string]bool)
+
+	logx.Debug("Template text: %s", templateText)
+	logx.Debug("Available parameters: %v", parameterValues)
+	logx.Debug("Found template variables: %v", matches)
+
+	for _, match := range matches {
+		if len(match) > 1 {
+			variable := strings.TrimSpace(match[1])
+			logx.Debug("Processing variable: %s", variable)
+
+			if !seen[variable] {
+				// For named parameters, try exact match first
+				if value, exists := parameterValues[variable]; exists {
+					parameters = append(parameters, whatsappTemplateParameter{
+						Type: "text",
+						Text: fmt.Sprintf("%v", value),
+					})
+					seen[variable] = true
+					logx.Debug("Matched parameter %s = %v", variable, value)
+				} else {
+					// Try numeric parameter (fallback for mixed templates)
+					if num, err := strconv.Atoi(variable); err == nil {
+						// Convert 1-based index to parameter keys
+						keys := make([]string, 0, len(parameterValues))
+						for k := range parameterValues {
+							keys = append(keys, k)
+						}
+						sort.Strings(keys) // Ensure consistent order
+
+						if num > 0 && num <= len(keys) {
+							key := keys[num-1]
+							if value, exists := parameterValues[key]; exists {
+								parameters = append(parameters, whatsappTemplateParameter{
+									Type: "text",
+									Text: fmt.Sprintf("%v", value),
+								})
+								seen[variable] = true
+								logx.Debug("Matched numeric parameter %s (index %d) = %v", variable, num, value)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	logx.Debug("Final parameters: %v", parameters)
+	return parameters
 }
 
 // buildTemplateComponentsForPositional handles numbered/positional parameter templates
@@ -543,6 +576,7 @@ func (w *WhatsAppProvider) convertToWhatsAppMessage(ctx context.Context, msg msg
 			Caption: msg.Content.Media.Caption,
 		}
 
+	// In the MessageTypeTemplate case:
 	case msgx.MessageTypeTemplate:
 		if msg.Content.Template == nil {
 			return nil, fmt.Errorf("template content is required for template messages")
@@ -551,6 +585,16 @@ func (w *WhatsAppProvider) convertToWhatsAppMessage(ctx context.Context, msg msg
 		whatsappMsg.Template = &whatsappTemplateMessage{
 			Name:     msg.Content.Template.Name,
 			Language: whatsappLanguage{Code: msg.Content.Template.Language},
+		}
+
+		// Build components using unified approach
+		if len(msg.Content.Template.Parameters) > 0 {
+			components, err := w.buildTemplateComponentsUnified(ctx, msg.Content.Template)
+			if err != nil {
+				logx.Error("Failed to build template components: %v", err)
+				return w.convertToWhatsAppMessageFallback(msg)
+			}
+			whatsappMsg.Template.Components = components
 		}
 
 		// Build components based on template structure
@@ -911,8 +955,14 @@ func (w *WhatsAppProvider) sendMessage(ctx context.Context, message *whatsappMes
 func (w *WhatsAppProvider) handleAPIError(resp *http.Response) error {
 	body, _ := io.ReadAll(resp.Body)
 
+	// Log the raw error response for debugging
+	logx.Error("WhatsApp API Error - Status: %d, Body: %s", resp.StatusCode, string(body))
+
 	var errorResp whatsappErrorResponse
 	if err := json.Unmarshal(body, &errorResp); err == nil && errorResp.Error.Code != 0 {
+		logx.Error("WhatsApp API Error Details - Code: %d, Message: %s, Type: %s, Subcode: %d",
+			errorResp.Error.Code, errorResp.Error.Message, errorResp.Error.Type, errorResp.Error.ErrorSubcode)
+
 		switch resp.StatusCode {
 		case http.StatusTooManyRequests:
 			return msgx.Registry.New(msgx.ErrRateLimitExceeded).
@@ -933,11 +983,13 @@ func (w *WhatsAppProvider) handleAPIError(resp *http.Response) error {
 			return msgx.Registry.New(msgx.ErrInvalidMessage).
 				WithDetail("provider", whatsappProvider).
 				WithDetail("whatsapp_error", errorResp).
+				WithDetail("whatsapp_message", errorResp.Error.Message).
 				WithDetail("http_status", resp.StatusCode)
 		default:
 			return msgx.Registry.New(msgx.ErrSendFailed).
 				WithDetail("provider", whatsappProvider).
 				WithDetail("whatsapp_error", errorResp).
+				WithDetail("whatsapp_message", errorResp.Error.Message).
 				WithDetail("http_status", resp.StatusCode)
 		}
 	}
@@ -1496,4 +1548,93 @@ type whatsappTypingResponse struct {
 	MessagingProduct string                    `json:"messaging_product"`
 	Contacts         []whatsappContact         `json:"contacts"`
 	Messages         []whatsappMessageResponse `json:"messages"`
+}
+
+// debugTemplateStructure logs template structure for debugging
+func (w *WhatsAppProvider) debugTemplateStructure(template *TemplateFromAPI, templateContent *msgx.TemplateContent) {
+	logx.Debug("=== Template Debug Info ===")
+	logx.Debug("Template Name: %s", template.Name)
+	logx.Debug("Template Language: %s", template.Language)
+	logx.Debug("Parameter Format: %s", template.ParameterFormat)
+	logx.Debug("Provided Parameters: %v", templateContent.Parameters)
+
+	for i, component := range template.Components {
+		logx.Debug("Component %d:", i)
+		logx.Debug("  Type: %s", component.Type)
+		logx.Debug("  Format: %s", component.Format)
+		logx.Debug("  Text: %s", component.Text)
+
+		if component.Example != nil {
+			logx.Debug("  Example Body Text: %v", component.Example.BodyText)
+			logx.Debug("  Example Named Params: %v", component.Example.BodyTextNamedParams)
+		}
+	}
+	logx.Debug("=== End Template Debug ===")
+}
+
+// buildTemplateComponentsUnified handles both NAMED and POSITIONAL parameters
+func (w *WhatsAppProvider) buildTemplateComponentsUnified(ctx context.Context, templateContent *msgx.TemplateContent) ([]whatsappTemplateComponent, error) {
+	template, err := w.GetTemplate(ctx, templateContent.Name, templateContent.Language)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch template structure: %w", err)
+	}
+
+	var components []whatsappTemplateComponent
+
+	// Convert parameters to ordered slice
+	paramValues := make([]string, 0)
+
+	// Sort parameter keys to ensure consistent ordering
+	keys := make([]string, 0, len(templateContent.Parameters))
+	for k := range templateContent.Parameters {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		paramValues = append(paramValues, fmt.Sprintf("%v", templateContent.Parameters[key]))
+	}
+
+	logx.Debug("Ordered parameter values: %v", paramValues)
+
+	paramIndex := 0
+
+	// Process components in order
+	for _, apiComponent := range template.Components {
+		switch apiComponent.Type {
+		case "HEADER":
+			if apiComponent.Format == "TEXT" && apiComponent.Text != "" {
+				paramCount := w.countTemplateParameters(apiComponent.Text)
+				if paramCount > 0 && paramIndex < len(paramValues) {
+					component := whatsappTemplateComponent{Type: "header"}
+					for i := 0; i < paramCount && paramIndex < len(paramValues); i++ {
+						component.Parameters = append(component.Parameters, whatsappTemplateParameter{
+							Type: "text",
+							Text: paramValues[paramIndex],
+						})
+						paramIndex++
+					}
+					components = append(components, component)
+				}
+			}
+
+		case "BODY":
+			if apiComponent.Text != "" {
+				paramCount := w.countTemplateParameters(apiComponent.Text)
+				if paramCount > 0 && paramIndex < len(paramValues) {
+					component := whatsappTemplateComponent{Type: "body"}
+					for i := 0; i < paramCount && paramIndex < len(paramValues); i++ {
+						component.Parameters = append(component.Parameters, whatsappTemplateParameter{
+							Type: "text",
+							Text: paramValues[paramIndex],
+						})
+						paramIndex++
+					}
+					components = append(components, component)
+				}
+			}
+		}
+	}
+
+	return components, nil
 }

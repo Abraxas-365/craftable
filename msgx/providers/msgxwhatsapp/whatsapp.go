@@ -350,17 +350,59 @@ func (w *WhatsAppProvider) ResolveTemplateFromAPI(ctx context.Context, templateC
 	return resolved, nil
 }
 
-// resolveTemplateText replaces parameters in template text
+// resolveTemplateText replaces parameters in template text with proper ordering for numbered placeholders
 func (w *WhatsAppProvider) resolveTemplateText(text string, parameters map[string]any) string {
 	if len(parameters) == 0 {
 		return text
 	}
 
 	resolved := text
-	for key, value := range parameters {
-		// Replace both numbered parameters {{1}}, {{2}} and named parameters {{name}}, {{career}}
-		placeholder := fmt.Sprintf("{{%s}}", key)
-		resolved = strings.ReplaceAll(resolved, placeholder, fmt.Sprintf("%v", value))
+
+	// Check if we have numbered parameters (1, 2, 3, etc.)
+	hasNumberedParams := false
+	for key := range parameters {
+		if _, err := strconv.Atoi(key); err == nil {
+			hasNumberedParams = true
+			break
+		}
+	}
+
+	if hasNumberedParams {
+		// Handle numbered parameters in correct order
+		var numberedKeys []int
+		numberedParams := make(map[int]any)
+
+		// Collect numbered parameters
+		for key, value := range parameters {
+			if num, err := strconv.Atoi(key); err == nil {
+				numberedKeys = append(numberedKeys, num)
+				numberedParams[num] = value
+			}
+		}
+
+		// Sort by number
+		sort.Ints(numberedKeys)
+
+		// Replace in order
+		for _, num := range numberedKeys {
+			placeholder := fmt.Sprintf("{{%d}}", num)
+			resolved = strings.ReplaceAll(resolved, placeholder, fmt.Sprintf("%v", numberedParams[num]))
+			logx.Debug("Replaced WhatsApp template {{%d}} with: %v", num, numberedParams[num])
+		}
+
+		// Handle non-numbered parameters
+		for key, value := range parameters {
+			if _, err := strconv.Atoi(key); err != nil {
+				placeholder := fmt.Sprintf("{{%s}}", key)
+				resolved = strings.ReplaceAll(resolved, placeholder, fmt.Sprintf("%v", value))
+			}
+		}
+	} else {
+		// Original logic for non-numbered parameters
+		for key, value := range parameters {
+			placeholder := fmt.Sprintf("{{%s}}", key)
+			resolved = strings.ReplaceAll(resolved, placeholder, fmt.Sprintf("%v", value))
+		}
 	}
 
 	return resolved

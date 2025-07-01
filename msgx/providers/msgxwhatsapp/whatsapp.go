@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -30,12 +31,13 @@ const (
 
 // TemplateFromAPI represents template structure from WhatsApp API
 type TemplateFromAPI struct {
-	Name       string                     `json:"name"`
-	Language   string                     `json:"language"`
-	Status     string                     `json:"status"`
-	Category   string                     `json:"category"`
-	ID         string                     `json:"id"`
-	Components []TemplateComponentFromAPI `json:"components"`
+	Name            string                     `json:"name"`
+	Language        string                     `json:"language"`
+	Status          string                     `json:"status"`
+	Category        string                     `json:"category"`
+	ID              string                     `json:"id"`
+	ParameterFormat string                     `json:"parameter_format,omitempty"`
+	Components      []TemplateComponentFromAPI `json:"components"`
 }
 
 type TemplateComponentFromAPI struct {
@@ -47,8 +49,14 @@ type TemplateComponentFromAPI struct {
 }
 
 type TemplateExample struct {
-	HeaderText []string   `json:"header_text,omitempty"`
-	BodyText   [][]string `json:"body_text,omitempty"`
+	HeaderText          []string             `json:"header_text,omitempty"`
+	BodyText            [][]string           `json:"body_text,omitempty"`
+	BodyTextNamedParams []BodyTextNamedParam `json:"body_text_named_params,omitempty"`
+}
+
+type BodyTextNamedParam struct {
+	ParamName string `json:"param_name"`
+	Example   string `json:"example"`
 }
 
 type TemplateButton struct {
@@ -173,6 +181,184 @@ func (w *WhatsAppProvider) GetTemplate(ctx context.Context, templateName, langua
 	return &template, nil
 }
 
+// extractParametersFromText extracts parameters from template text in order of appearance
+func (w *WhatsAppProvider) extractParametersFromText(templateText string, parameterValues map[string]any) []whatsappTemplateParameter {
+	if templateText == "" || len(parameterValues) == 0 {
+		return nil
+	}
+
+	// Extract variables in order of appearance
+	re := regexp.MustCompile(`\{\{([^{}]+)\}\}`)
+	matches := re.FindAllStringSubmatch(templateText, -1)
+
+	var parameters []whatsappTemplateParameter
+	seen := make(map[string]bool)
+
+	for _, match := range matches {
+		if len(match) > 1 {
+			variable := strings.TrimSpace(match[1])
+			if !seen[variable] {
+				if value, exists := parameterValues[variable]; exists {
+					parameters = append(parameters, whatsappTemplateParameter{
+						Type: "text",
+						Text: fmt.Sprintf("%v", value),
+					})
+					seen[variable] = true
+				}
+			}
+		}
+	}
+
+	return parameters
+}
+
+// buildTemplateComponentsForNamed handles NAMED parameter templates
+func (w *WhatsAppProvider) buildTemplateComponentsForNamed(ctx context.Context, templateContent *msgx.TemplateContent) ([]whatsappTemplateComponent, error) {
+	// For NAMED parameter templates, we need to fetch the template structure
+	template, err := w.GetTemplate(ctx, templateContent.Name, templateContent.Language)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch template structure: %w", err)
+	}
+
+	var components []whatsappTemplateComponent
+
+	// Process each component from the template
+	for _, apiComponent := range template.Components {
+		switch apiComponent.Type {
+		case "HEADER":
+			if apiComponent.Format == "TEXT" && apiComponent.Text != "" {
+				headerParams := w.extractParametersFromText(apiComponent.Text, templateContent.Parameters)
+				if len(headerParams) > 0 {
+					component := whatsappTemplateComponent{
+						Type:       "header",
+						Parameters: headerParams,
+					}
+					components = append(components, component)
+				}
+			}
+
+		case "BODY":
+			if apiComponent.Text != "" {
+				bodyParams := w.extractParametersFromText(apiComponent.Text, templateContent.Parameters)
+				if len(bodyParams) > 0 {
+					component := whatsappTemplateComponent{
+						Type:       "body",
+						Parameters: bodyParams,
+					}
+					components = append(components, component)
+				}
+			}
+		}
+	}
+
+	return components, nil
+}
+
+// buildTemplateComponentsForPositional handles numbered/positional parameter templates
+func (w *WhatsAppProvider) buildTemplateComponentsForPositional(ctx context.Context, templateContent *msgx.TemplateContent) ([]whatsappTemplateComponent, error) {
+	// Get template structure to count parameters per component
+	template, err := w.GetTemplate(ctx, templateContent.Name, templateContent.Language)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch template structure: %w", err)
+	}
+
+	var components []whatsappTemplateComponent
+	parameterIndex := 0
+
+	// Convert parameters map to ordered slice for consistent parameter assignment
+	parameterValues := make([]string, 0, len(templateContent.Parameters))
+
+	// Sort parameter keys to ensure consistent ordering
+	var sortedKeys []string
+	for key := range templateContent.Parameters {
+		sortedKeys = append(sortedKeys, key)
+	}
+
+	// Try to sort numerically if keys are numbers, otherwise sort alphabetically
+	sort.Slice(sortedKeys, func(i, j int) bool {
+		numI, errI := strconv.Atoi(sortedKeys[i])
+		numJ, errJ := strconv.Atoi(sortedKeys[j])
+		if errI == nil && errJ == nil {
+			return numI < numJ
+		}
+		return sortedKeys[i] < sortedKeys[j]
+	})
+
+	for _, key := range sortedKeys {
+		parameterValues = append(parameterValues, fmt.Sprintf("%v", templateContent.Parameters[key]))
+	}
+
+	// Process each component from the template
+	for _, apiComponent := range template.Components {
+		switch apiComponent.Type {
+		case "HEADER":
+			if apiComponent.Format == "TEXT" {
+				// Count parameters in header text
+				headerParamCount := w.countTemplateParameters(apiComponent.Text)
+				if headerParamCount > 0 {
+					component := whatsappTemplateComponent{
+						Type: "header",
+					}
+
+					// Add parameters for header
+					for i := 0; i < headerParamCount && parameterIndex < len(parameterValues); i++ {
+						component.Parameters = append(component.Parameters, whatsappTemplateParameter{
+							Type: "text",
+							Text: parameterValues[parameterIndex],
+						})
+						parameterIndex++
+					}
+					components = append(components, component)
+				}
+			}
+
+		case "BODY":
+			// Count parameters in body text
+			bodyParamCount := w.countTemplateParameters(apiComponent.Text)
+			if bodyParamCount > 0 {
+				component := whatsappTemplateComponent{
+					Type: "body",
+				}
+
+				// Add parameters for body
+				for i := 0; i < bodyParamCount && parameterIndex < len(parameterValues); i++ {
+					component.Parameters = append(component.Parameters, whatsappTemplateParameter{
+						Type: "text",
+						Text: parameterValues[parameterIndex],
+					})
+					parameterIndex++
+				}
+				components = append(components, component)
+			}
+		}
+	}
+
+	return components, nil
+}
+
+// countTemplateParameters counts template parameters in text
+func (w *WhatsAppProvider) countTemplateParameters(text string) int {
+	// Count {{1}}, {{2}}, etc. patterns
+	re := regexp.MustCompile(`\{\{(\d+)\}\}`)
+	matches := re.FindAllStringSubmatch(text, -1)
+
+	if len(matches) == 0 {
+		return 0
+	}
+
+	// Find the highest parameter number
+	maxParam := 0
+	for _, match := range matches {
+		if len(match) > 1 {
+			if num, err := strconv.Atoi(match[1]); err == nil && num > maxParam {
+				maxParam = num
+			}
+		}
+	}
+
+	return maxParam
+}
+
 // ResolveTemplateFromAPI resolves template content using API-fetched template
 func (w *WhatsAppProvider) ResolveTemplateFromAPI(ctx context.Context, templateContent *msgx.TemplateContent) (*msgx.ResolvedContent, error) {
 	// Fetch template from API
@@ -244,7 +430,7 @@ func (w *WhatsAppProvider) resolveTemplateText(text string, parameters map[strin
 
 	resolved := text
 	for key, value := range parameters {
-		// Replace numbered parameters {{1}}, {{2}}, etc.
+		// Replace both numbered parameters {{1}}, {{2}} and named parameters {{name}}, {{career}}
 		placeholder := fmt.Sprintf("{{%s}}", key)
 		resolved = strings.ReplaceAll(resolved, placeholder, fmt.Sprintf("%v", value))
 	}
@@ -257,7 +443,7 @@ func (w *WhatsAppProvider) resolveTemplateText(text string, parameters map[strin
 // Send sends a message via WhatsApp Business API
 func (w *WhatsAppProvider) Send(ctx context.Context, message msgx.Message) (*msgx.Response, error) {
 	// Convert to WhatsApp API format
-	whatsappMsg, err := w.convertToWhatsAppMessage(message)
+	whatsappMsg, err := w.convertToWhatsAppMessage(ctx, message)
 	if err != nil {
 		return nil, msgx.Registry.New(msgx.ErrInvalidMessage).
 			WithCause(err).
@@ -296,6 +482,162 @@ func (w *WhatsAppProvider) Send(ctx context.Context, message msgx.Message) (*msg
 	}
 
 	return msgxResponse, nil
+}
+
+// convertToWhatsAppMessage converts msgx.Message to WhatsApp API format
+func (w *WhatsAppProvider) convertToWhatsAppMessage(ctx context.Context, msg msgx.Message) (*whatsappMessage, error) {
+	whatsappMsg := &whatsappMessage{
+		MessagingProduct: "whatsapp",
+		RecipientType:    "individual",
+		To:               w.cleanPhoneNumber(msg.To),
+	}
+
+	switch msg.Type {
+	case msgx.MessageTypeText:
+		if msg.Content.Text == nil {
+			return nil, fmt.Errorf("text content is required for text messages")
+		}
+		whatsappMsg.Type = "text"
+		whatsappMsg.Text = &whatsappTextMessage{
+			Body:       msg.Content.Text.Body,
+			PreviewURL: msg.Content.Text.PreviewURL,
+		}
+
+	case msgx.MessageTypeImage:
+		if msg.Content.Media == nil {
+			return nil, fmt.Errorf("media content is required for image messages")
+		}
+		whatsappMsg.Type = "image"
+		whatsappMsg.Image = &whatsappMediaMessage{
+			Link:    msg.Content.Media.URL,
+			Caption: msg.Content.Media.Caption,
+		}
+
+	case msgx.MessageTypeDocument:
+		if msg.Content.Media == nil {
+			return nil, fmt.Errorf("media content is required for document messages")
+		}
+		whatsappMsg.Type = "document"
+		whatsappMsg.Document = &whatsappDocumentMessage{
+			Link:     msg.Content.Media.URL,
+			Caption:  msg.Content.Media.Caption,
+			Filename: msg.Content.Media.Filename,
+		}
+
+	case msgx.MessageTypeAudio:
+		if msg.Content.Media == nil {
+			return nil, fmt.Errorf("media content is required for audio messages")
+		}
+		whatsappMsg.Type = "audio"
+		whatsappMsg.Audio = &whatsappMediaMessage{
+			Link: msg.Content.Media.URL,
+		}
+
+	case msgx.MessageTypeVideo:
+		if msg.Content.Media == nil {
+			return nil, fmt.Errorf("media content is required for video messages")
+		}
+		whatsappMsg.Type = "video"
+		whatsappMsg.Video = &whatsappMediaMessage{
+			Link:    msg.Content.Media.URL,
+			Caption: msg.Content.Media.Caption,
+		}
+
+	case msgx.MessageTypeTemplate:
+		if msg.Content.Template == nil {
+			return nil, fmt.Errorf("template content is required for template messages")
+		}
+		whatsappMsg.Type = "template"
+		whatsappMsg.Template = &whatsappTemplateMessage{
+			Name:     msg.Content.Template.Name,
+			Language: whatsappLanguage{Code: msg.Content.Template.Language},
+		}
+
+		// Build components based on template structure
+		if len(msg.Content.Template.Parameters) > 0 {
+			// Try to get template to determine parameter format
+			template, err := w.GetTemplate(ctx, msg.Content.Template.Name, msg.Content.Template.Language)
+			if err != nil {
+				logx.Error("Failed to get template structure: %v", err)
+				// Fallback to named parameter handling
+				components, err := w.buildTemplateComponentsForNamed(ctx, msg.Content.Template)
+				if err != nil {
+					return w.convertToWhatsAppMessageFallback(msg)
+				}
+				whatsappMsg.Template.Components = components
+			} else {
+				// Handle based on parameter format
+				logx.Debug("Template parameter format: %s", template.ParameterFormat)
+
+				var components []whatsappTemplateComponent
+				var componentErr error
+
+				switch template.ParameterFormat {
+				case "NAMED":
+					// For NAMED templates, use named parameter handling
+					components, componentErr = w.buildTemplateComponentsForNamed(ctx, msg.Content.Template)
+				case "POSITIONAL", "":
+					// For POSITIONAL/numbered templates, use numbered parameter handling
+					components, componentErr = w.buildTemplateComponentsForPositional(ctx, msg.Content.Template)
+				default:
+					// Unknown format, try NAMED first
+					logx.Warn("Unknown parameter format '%s', trying NAMED", template.ParameterFormat)
+					components, componentErr = w.buildTemplateComponentsForNamed(ctx, msg.Content.Template)
+				}
+
+				if componentErr != nil {
+					logx.Error("Failed to build template components: %v", componentErr)
+					return w.convertToWhatsAppMessageFallback(msg)
+				}
+
+				whatsappMsg.Template.Components = components
+			}
+		}
+
+	default:
+		return nil, fmt.Errorf("unsupported message type: %s", msg.Type)
+	}
+
+	return whatsappMsg, nil
+}
+
+// convertToWhatsAppMessageFallback provides a fallback when template processing fails
+func (w *WhatsAppProvider) convertToWhatsAppMessageFallback(msg msgx.Message) (*whatsappMessage, error) {
+	whatsappMsg := &whatsappMessage{
+		MessagingProduct: "whatsapp",
+		RecipientType:    "individual",
+		To:               w.cleanPhoneNumber(msg.To),
+		Type:             "template",
+		Template: &whatsappTemplateMessage{
+			Name:     msg.Content.Template.Name,
+			Language: whatsappLanguage{Code: msg.Content.Template.Language},
+		},
+	}
+
+	// Simple fallback - assume all parameters go to body
+	if len(msg.Content.Template.Parameters) > 0 {
+		component := whatsappTemplateComponent{
+			Type: "body",
+		}
+
+		// Sort parameters by key to ensure consistent ordering
+		var sortedKeys []string
+		for key := range msg.Content.Template.Parameters {
+			sortedKeys = append(sortedKeys, key)
+		}
+		sort.Strings(sortedKeys)
+
+		for _, key := range sortedKeys {
+			component.Parameters = append(component.Parameters, whatsappTemplateParameter{
+				Type: "text",
+				Text: fmt.Sprintf("%v", msg.Content.Template.Parameters[key]),
+			})
+		}
+
+		whatsappMsg.Template.Components = []whatsappTemplateComponent{component}
+	}
+
+	return whatsappMsg, nil
 }
 
 // SendBulk sends multiple messages
@@ -460,148 +802,6 @@ func (w *WhatsAppProvider) VerifyWebhook(req *http.Request) error {
 	return nil
 }
 
-// Alternative implementation with even more robust handling
-func (w *WhatsAppProvider) VerifyWebhookRobust(req *http.Request) error {
-	if w.config.WebhookSecret == "" {
-		return nil // Skip verification if no secret configured
-	}
-
-	// Get signature header
-	signature := req.Header.Get(whatsappSignatureHeader)
-	if signature == "" {
-		return msgx.Registry.New(msgx.ErrWebhookVerificationFailed).
-			WithDetail("provider", whatsappProvider).
-			WithDetail("reason", "Missing X-Hub-Signature-256 header")
-	}
-
-	// Read raw body bytes
-	rawBody, err := io.ReadAll(req.Body)
-	if err != nil {
-		return msgx.Registry.New(msgx.ErrWebhookVerificationFailed).
-			WithCause(err).
-			WithDetail("provider", whatsappProvider).
-			WithDetail("operation", "read_body")
-	}
-
-	// Restore body for subsequent processing
-	req.Body = io.NopCloser(bytes.NewReader(rawBody))
-
-	// Validate signature format and extract hex
-	var receivedSigHex string
-	if strings.HasPrefix(signature, "sha256=") {
-		receivedSigHex = signature[7:]
-	} else {
-		// Some implementations may send just the hex without prefix
-		receivedSigHex = signature
-	}
-
-	// Validate hex format
-	if len(receivedSigHex) != 64 {
-		return msgx.Registry.New(msgx.ErrWebhookVerificationFailed).
-			WithDetail("provider", whatsappProvider).
-			WithDetail("reason", "Invalid signature format").
-			WithDetail("signature_length", len(receivedSigHex))
-	}
-
-	// Decode received signature to verify it's valid hex
-	receivedSigBytes, err := hex.DecodeString(receivedSigHex)
-	if err != nil {
-		return msgx.Registry.New(msgx.ErrWebhookVerificationFailed).
-			WithCause(err).
-			WithDetail("provider", whatsappProvider).
-			WithDetail("reason", "Invalid hex signature")
-	}
-
-	// Calculate expected signature
-	mac := hmac.New(sha256.New, []byte(w.config.WebhookSecret))
-	mac.Write(rawBody)
-	expectedSigBytes := mac.Sum(nil)
-
-	// Compare signatures using constant-time comparison
-	if !hmac.Equal(receivedSigBytes, expectedSigBytes) {
-		return msgx.Registry.New(msgx.ErrWebhookVerificationFailed).
-			WithDetail("provider", whatsappProvider).
-			WithDetail("reason", "HMAC signature mismatch").
-			WithDetail("received_hex", receivedSigHex).
-			WithDetail("expected_hex", hex.EncodeToString(expectedSigBytes)).
-			WithDetail("body_length", len(rawBody)).
-			WithDetail("secret_length", len(w.config.WebhookSecret)).
-			WithDetail("webhook_secret_preview", w.config.WebhookSecret[:min(8, len(w.config.WebhookSecret))]+"...")
-	}
-
-	return nil
-}
-
-// Debug version for troubleshooting
-func (w *WhatsAppProvider) VerifyWebhookDebug(req *http.Request) error {
-	if w.config.WebhookSecret == "" {
-		fmt.Printf("[DEBUG] Webhook verification skipped - no secret configured\n")
-		return nil
-	}
-
-	// Log all headers for debugging
-	fmt.Printf("[DEBUG] Request headers:\n")
-	for k, v := range req.Header {
-		fmt.Printf("  %s: %s\n", k, strings.Join(v, ", "))
-	}
-
-	signature := req.Header.Get(whatsappSignatureHeader)
-	fmt.Printf("[DEBUG] Signature header (%s): %s\n", whatsappSignatureHeader, signature)
-
-	if signature == "" {
-		return msgx.Registry.New(msgx.ErrWebhookVerificationFailed).
-			WithDetail("provider", whatsappProvider).
-			WithDetail("reason", "Missing signature header")
-	}
-
-	// Read body
-	rawBody, err := io.ReadAll(req.Body)
-	if err != nil {
-		return msgx.Registry.New(msgx.ErrWebhookVerificationFailed).
-			WithCause(err).
-			WithDetail("provider", whatsappProvider).
-			WithDetail("operation", "read_body")
-	}
-
-	fmt.Printf("[DEBUG] Body length: %d bytes\n", len(rawBody))
-	fmt.Printf("[DEBUG] Body preview: %s\n", string(rawBody[:min(200, len(rawBody))]))
-	fmt.Printf("[DEBUG] Webhook secret length: %d\n", len(w.config.WebhookSecret))
-
-	// Restore body
-	req.Body = io.NopCloser(bytes.NewReader(rawBody))
-
-	// Process signature
-	var sigHex string
-	if strings.HasPrefix(signature, "sha256=") {
-		sigHex = signature[7:]
-		fmt.Printf("[DEBUG] Stripped 'sha256=' prefix, hex: %s\n", sigHex)
-	} else {
-		sigHex = signature
-		fmt.Printf("[DEBUG] Using signature as-is: %s\n", sigHex)
-	}
-
-	// Calculate expected signature
-	mac := hmac.New(sha256.New, []byte(w.config.WebhookSecret))
-	mac.Write(rawBody)
-	expectedHex := hex.EncodeToString(mac.Sum(nil))
-
-	fmt.Printf("[DEBUG] Calculated signature: %s\n", expectedHex)
-	fmt.Printf("[DEBUG] Received signature:   %s\n", sigHex)
-	fmt.Printf("[DEBUG] Signatures match: %t\n", hmac.Equal([]byte(sigHex), []byte(expectedHex)))
-
-	// Verify
-	if !hmac.Equal([]byte(sigHex), []byte(expectedHex)) {
-		return msgx.Registry.New(msgx.ErrWebhookVerificationFailed).
-			WithDetail("provider", whatsappProvider).
-			WithDetail("reason", "Signature mismatch").
-			WithDetail("received", sigHex).
-			WithDetail("expected", expectedHex)
-	}
-
-	fmt.Printf("[DEBUG] Webhook verification successful!\n")
-	return nil
-}
-
 // ParseIncomingMessage parses webhook data into structured message
 func (w *WhatsAppProvider) ParseIncomingMessage(data []byte) (*msgx.IncomingMessage, error) {
 	var webhook whatsappWebhookPayload
@@ -659,100 +859,6 @@ func (w *WhatsAppProvider) handleVerificationChallenge(req *http.Request) (*msgx
 
 // ========== Helper Methods ==========
 
-func (w *WhatsAppProvider) convertToWhatsAppMessage(msg msgx.Message) (*whatsappMessage, error) {
-	whatsappMsg := &whatsappMessage{
-		MessagingProduct: "whatsapp",
-		RecipientType:    "individual",
-		To:               w.cleanPhoneNumber(msg.To),
-	}
-
-	switch msg.Type {
-	case msgx.MessageTypeText:
-		if msg.Content.Text == nil {
-			return nil, fmt.Errorf("text content is required for text messages")
-		}
-		whatsappMsg.Type = "text"
-		whatsappMsg.Text = &whatsappTextMessage{
-			Body:       msg.Content.Text.Body,
-			PreviewURL: msg.Content.Text.PreviewURL,
-		}
-
-	case msgx.MessageTypeImage:
-		if msg.Content.Media == nil {
-			return nil, fmt.Errorf("media content is required for image messages")
-		}
-		whatsappMsg.Type = "image"
-		whatsappMsg.Image = &whatsappMediaMessage{
-			Link:    msg.Content.Media.URL,
-			Caption: msg.Content.Media.Caption,
-		}
-
-	case msgx.MessageTypeDocument:
-		if msg.Content.Media == nil {
-			return nil, fmt.Errorf("media content is required for document messages")
-		}
-		whatsappMsg.Type = "document"
-		whatsappMsg.Document = &whatsappDocumentMessage{
-			Link:     msg.Content.Media.URL,
-			Caption:  msg.Content.Media.Caption,
-			Filename: msg.Content.Media.Filename,
-		}
-
-	case msgx.MessageTypeAudio:
-		if msg.Content.Media == nil {
-			return nil, fmt.Errorf("media content is required for audio messages")
-		}
-		whatsappMsg.Type = "audio"
-		whatsappMsg.Audio = &whatsappMediaMessage{
-			Link: msg.Content.Media.URL,
-		}
-
-	case msgx.MessageTypeVideo:
-		if msg.Content.Media == nil {
-			return nil, fmt.Errorf("media content is required for video messages")
-		}
-		whatsappMsg.Type = "video"
-		whatsappMsg.Video = &whatsappMediaMessage{
-			Link:    msg.Content.Media.URL,
-			Caption: msg.Content.Media.Caption,
-		}
-
-	case msgx.MessageTypeTemplate:
-		if msg.Content.Template == nil {
-			return nil, fmt.Errorf("template content is required for template messages")
-		}
-		whatsappMsg.Type = "template"
-		whatsappMsg.Template = &whatsappTemplateMessage{
-			Name:     msg.Content.Template.Name,
-			Language: whatsappLanguage{Code: msg.Content.Template.Language},
-		}
-
-		// Convert parameters (improved for v23.0)
-		if len(msg.Content.Template.Parameters) > 0 {
-			components := []whatsappTemplateComponent{
-				{
-					Type: "body",
-				},
-			}
-
-			for key, value := range msg.Content.Template.Parameters {
-				components[0].Parameters = append(components[0].Parameters, whatsappTemplateParameter{
-					Type: "text",
-					Text: fmt.Sprintf("%v", value),
-				})
-				_ = key // Avoid unused variable
-			}
-
-			whatsappMsg.Template.Components = components
-		}
-
-	default:
-		return nil, fmt.Errorf("unsupported message type: %s", msg.Type)
-	}
-
-	return whatsappMsg, nil
-}
-
 func (w *WhatsAppProvider) sendMessage(ctx context.Context, message *whatsappMessage) (*whatsappSendResponse, error) {
 	url := fmt.Sprintf("%s/messages", w.baseURL)
 
@@ -763,6 +869,8 @@ func (w *WhatsAppProvider) sendMessage(ctx context.Context, message *whatsappMes
 			WithDetail("provider", whatsappProvider).
 			WithDetail("operation", "marshal_message")
 	}
+
+	logx.Debug("Sending WhatsApp message: %s", string(jsonData))
 
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
@@ -843,7 +951,7 @@ func (w *WhatsAppProvider) handleAPIError(resp *http.Response) error {
 func (w *WhatsAppProvider) convertWhatsAppMessage(message whatsappIncomingMessage, metadata whatsappMetadata) (*msgx.IncomingMessage, error) {
 	tsInt, err := strconv.ParseInt(message.Timestamp, 10, 64)
 	if err != nil {
-		logx.Error("Invalid timestamp:", err)
+		logx.Error("Invalid timestamp: %s", err)
 		tsInt = 0
 	}
 	incomingMsg := &msgx.IncomingMessage{
@@ -957,6 +1065,172 @@ func (w *WhatsAppProvider) isValidPhoneFormat(phoneNumber string) bool {
 	// Basic E.164 format validation
 	e164Regex := regexp.MustCompile(`^\+?[1-9]\d{1,14}$`)
 	return e164Regex.MatchString(phoneNumber)
+}
+
+// ========== Typing Indicator Methods ==========
+
+func (w *WhatsAppProvider) SendTypingIndicator(ctx context.Context, to string, isTyping bool) error {
+	typingType := "typing_on"
+	if !isTyping {
+		typingType = "typing_off"
+	}
+
+	// Validate phone number format
+	cleanedTo := w.cleanPhoneNumber(to)
+	if !w.isValidPhoneFormat(cleanedTo) {
+		return msgx.Registry.New(msgx.ErrInvalidMessage).
+			WithDetail("provider", whatsappProvider).
+			WithDetail("phone_number", to).
+			WithDetail("cleaned", cleanedTo).
+			WithDetail("reason", "Invalid phone number format")
+	}
+
+	// Create typing indicator message
+	typingMsg := whatsappTypingMessage{
+		MessagingProduct: "whatsapp",
+		RecipientType:    "individual",
+		To:               cleanedTo,
+		Type:             typingType,
+	}
+
+	// Send the typing indicator
+	_, err := w.sendTypingIndicator(ctx, typingMsg)
+	if err != nil {
+		return msgx.Registry.New(msgx.ErrSendFailed).
+			WithCause(err).
+			WithDetail("provider", whatsappProvider).
+			WithDetail("operation", "send_typing_indicator").
+			WithDetail("to", cleanedTo).
+			WithDetail("typing_type", typingType)
+	}
+
+	return nil
+}
+
+// StartTyping sends "typing_on" indicator
+func (w *WhatsAppProvider) StartTyping(ctx context.Context, to string) error {
+	return w.SendTypingIndicator(ctx, to, true)
+}
+
+// StopTyping sends "typing_off" indicator
+func (w *WhatsAppProvider) StopTyping(ctx context.Context, to string) error {
+	return w.SendTypingIndicator(ctx, to, false)
+}
+
+// SendTypingWithDuration sends typing indicator for a specific duration
+func (w *WhatsAppProvider) SendTypingWithDuration(ctx context.Context, to string, duration time.Duration) error {
+	// Start typing
+	if err := w.StartTyping(ctx, to); err != nil {
+		return err
+	}
+
+	// Wait for the specified duration (max 30 seconds as per WhatsApp limits)
+	maxDuration := 30 * time.Second
+	if duration > maxDuration {
+		duration = maxDuration
+	}
+
+	select {
+	case <-ctx.Done():
+		// Context cancelled, still try to stop typing
+		_ = w.StopTyping(context.Background(), to)
+		return ctx.Err()
+	case <-time.After(duration):
+		// Duration elapsed, stop typing
+		return w.StopTyping(ctx, to)
+	}
+}
+
+// sendTypingIndicator handles the actual HTTP request for typing indicators
+func (w *WhatsAppProvider) sendTypingIndicator(ctx context.Context, typingMsg whatsappTypingMessage) (*whatsappTypingResponse, error) {
+	// Marshal the typing message
+	payload, err := json.Marshal(typingMsg)
+	if err != nil {
+		return nil, msgx.Registry.New(msgx.ErrSendFailed).
+			WithCause(err).
+			WithDetail("provider", whatsappProvider).
+			WithDetail("operation", "marshal_typing_payload")
+	}
+
+	// Create the request URL (same endpoint as regular messages)
+	url := fmt.Sprintf("%s/messages", w.baseURL)
+
+	// Create HTTP request
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(payload))
+	if err != nil {
+		return nil, msgx.Registry.New(msgx.ErrSendFailed).
+			WithCause(err).
+			WithDetail("provider", whatsappProvider).
+			WithDetail("operation", "create_typing_request")
+	}
+
+	// Set headers (same pattern as regular messages)
+	req.Header.Set("Authorization", "Bearer "+w.config.AccessToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	// Execute the request
+	resp, err := w.httpClient.Do(req)
+	if err != nil {
+		return nil, msgx.Registry.New(msgx.ErrSendFailed).
+			WithCause(err).
+			WithDetail("provider", whatsappProvider).
+			WithDetail("operation", "http_typing_request")
+	}
+	defer resp.Body.Close()
+
+	// Check response status
+	if resp.StatusCode != http.StatusOK {
+		return nil, w.handleAPIError(resp)
+	}
+
+	// Parse response
+	var typingResp whatsappTypingResponse
+	if err := json.NewDecoder(resp.Body).Decode(&typingResp); err != nil {
+		return nil, msgx.Registry.New(msgx.ErrSendFailed).
+			WithCause(err).
+			WithDetail("provider", whatsappProvider).
+			WithDetail("operation", "decode_typing_response")
+	}
+
+	return &typingResp, nil
+}
+
+// SendWithTyping sends a message with typing indicator simulation
+func (w *WhatsAppProvider) SendWithTyping(ctx context.Context, message msgx.Message, typingDuration time.Duration) (*msgx.Response, error) {
+	// Start typing indicator
+	if err := w.StartTyping(ctx, message.To); err != nil {
+		// Log the error but don't fail the message send
+		logx.Error("Failed to send typing indicator before message: %v", err)
+	}
+
+	// Wait for typing duration
+	if typingDuration > 0 {
+		maxDuration := 30 * time.Second
+		if typingDuration > maxDuration {
+			typingDuration = maxDuration
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(typingDuration):
+			// Continue to send message
+		}
+	}
+
+	// Send the actual message
+	response, err := w.Send(ctx, message)
+
+	// Stop typing indicator (fire and forget)
+	go func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if stopErr := w.StopTyping(stopCtx, message.To); stopErr != nil {
+			logx.Error("Failed to stop typing indicator after message: %v", stopErr)
+		}
+	}()
+
+	return response, err
 }
 
 // ========== WhatsApp API Structures ==========
@@ -1222,170 +1496,4 @@ type whatsappTypingResponse struct {
 	MessagingProduct string                    `json:"messaging_product"`
 	Contacts         []whatsappContact         `json:"contacts"`
 	Messages         []whatsappMessageResponse `json:"messages"`
-}
-
-func (w *WhatsAppProvider) SendTypingIndicator(ctx context.Context, to string, isTyping bool) error {
-	typingType := "typing_on"
-	if !isTyping {
-		typingType = "typing_off"
-	}
-
-	// Validate phone number format
-	cleanedTo := w.cleanPhoneNumber(to)
-	if !w.isValidPhoneFormat(cleanedTo) {
-		return msgx.Registry.New(msgx.ErrInvalidMessage).
-			WithDetail("provider", whatsappProvider).
-			WithDetail("phone_number", to).
-			WithDetail("cleaned", cleanedTo).
-			WithDetail("reason", "Invalid phone number format")
-	}
-
-	// Create typing indicator message
-	typingMsg := whatsappTypingMessage{
-		MessagingProduct: "whatsapp",
-		RecipientType:    "individual",
-		To:               cleanedTo,
-		Type:             typingType,
-	}
-
-	// Send the typing indicator
-	_, err := w.sendTypingIndicator(ctx, typingMsg)
-	if err != nil {
-		return msgx.Registry.New(msgx.ErrSendFailed).
-			WithCause(err).
-			WithDetail("provider", whatsappProvider).
-			WithDetail("operation", "send_typing_indicator").
-			WithDetail("to", cleanedTo).
-			WithDetail("typing_type", typingType)
-	}
-
-	return nil
-}
-
-// StartTyping sends "typing_on" indicator
-func (w *WhatsAppProvider) StartTyping(ctx context.Context, to string) error {
-	return w.SendTypingIndicator(ctx, to, true)
-}
-
-// StopTyping sends "typing_off" indicator
-func (w *WhatsAppProvider) StopTyping(ctx context.Context, to string) error {
-	return w.SendTypingIndicator(ctx, to, false)
-}
-
-// SendTypingWithDuration sends typing indicator for a specific duration
-func (w *WhatsAppProvider) SendTypingWithDuration(ctx context.Context, to string, duration time.Duration) error {
-	// Start typing
-	if err := w.StartTyping(ctx, to); err != nil {
-		return err
-	}
-
-	// Wait for the specified duration (max 30 seconds as per WhatsApp limits)
-	maxDuration := 30 * time.Second
-	if duration > maxDuration {
-		duration = maxDuration
-	}
-
-	select {
-	case <-ctx.Done():
-		// Context cancelled, still try to stop typing
-		_ = w.StopTyping(context.Background(), to)
-		return ctx.Err()
-	case <-time.After(duration):
-		// Duration elapsed, stop typing
-		return w.StopTyping(ctx, to)
-	}
-}
-
-// sendTypingIndicator handles the actual HTTP request for typing indicators
-func (w *WhatsAppProvider) sendTypingIndicator(ctx context.Context, typingMsg whatsappTypingMessage) (*whatsappTypingResponse, error) {
-	// Marshal the typing message
-	payload, err := json.Marshal(typingMsg)
-	if err != nil {
-		return nil, msgx.Registry.New(msgx.ErrSendFailed).
-			WithCause(err).
-			WithDetail("provider", whatsappProvider).
-			WithDetail("operation", "marshal_typing_payload")
-	}
-
-	// Create the request URL (same endpoint as regular messages)
-	url := fmt.Sprintf("%s/messages", w.baseURL)
-
-	// Create HTTP request
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(payload))
-	if err != nil {
-		return nil, msgx.Registry.New(msgx.ErrSendFailed).
-			WithCause(err).
-			WithDetail("provider", whatsappProvider).
-			WithDetail("operation", "create_typing_request")
-	}
-
-	// Set headers (same pattern as regular messages)
-	req.Header.Set("Authorization", "Bearer "+w.config.AccessToken)
-	req.Header.Set("Content-Type", "application/json")
-
-	// Execute the request
-	resp, err := w.httpClient.Do(req)
-	if err != nil {
-		return nil, msgx.Registry.New(msgx.ErrSendFailed).
-			WithCause(err).
-			WithDetail("provider", whatsappProvider).
-			WithDetail("operation", "http_typing_request")
-	}
-	defer resp.Body.Close()
-
-	// Check response status
-	if resp.StatusCode != http.StatusOK {
-		return nil, w.handleAPIError(resp)
-	}
-
-	// Parse response
-	var typingResp whatsappTypingResponse
-	if err := json.NewDecoder(resp.Body).Decode(&typingResp); err != nil {
-		return nil, msgx.Registry.New(msgx.ErrSendFailed).
-			WithCause(err).
-			WithDetail("provider", whatsappProvider).
-			WithDetail("operation", "decode_typing_response")
-	}
-
-	return &typingResp, nil
-}
-
-// ========== Helper Methods for Enhanced Messaging ==========
-
-// SendWithTyping sends a message with typing indicator simulation
-func (w *WhatsAppProvider) SendWithTyping(ctx context.Context, message msgx.Message, typingDuration time.Duration) (*msgx.Response, error) {
-	// Start typing indicator
-	if err := w.StartTyping(ctx, message.To); err != nil {
-		// Log the error but don't fail the message send
-		logx.Error("Failed to send typing indicator before message: %v", err)
-	}
-
-	// Wait for typing duration
-	if typingDuration > 0 {
-		maxDuration := 30 * time.Second
-		if typingDuration > maxDuration {
-			typingDuration = maxDuration
-		}
-
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(typingDuration):
-			// Continue to send message
-		}
-	}
-
-	// Send the actual message
-	response, err := w.Send(ctx, message)
-
-	// Stop typing indicator (fire and forget)
-	go func() {
-		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if stopErr := w.StopTyping(stopCtx, message.To); stopErr != nil {
-			logx.Error("Failed to stop typing indicator after message: %v", stopErr)
-		}
-	}()
-
-	return response, err
 }

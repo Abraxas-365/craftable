@@ -526,7 +526,7 @@ func (w *WhatsAppProvider) convertToWhatsAppMessage(
 			Language: whatsappLanguage{Code: msg.Content.Template.Language},
 		}
 
-		// Convert parameters (improved for v23.0) - FIXED VERSION
+		// Convert parameters for WhatsApp (FIXED VERSION)
 		if len(msg.Content.Template.Parameters) > 0 {
 			components := []whatsappTemplateComponent{
 				{
@@ -534,49 +534,51 @@ func (w *WhatsAppProvider) convertToWhatsAppMessage(
 				},
 			}
 
-			// *** FIX: Sort parameters by their numeric keys for correct order ***
-			type orderedParam struct {
-				order int
-				key   string
-				value any
+			// Check if we have numeric keys (indicating ordered parameters)
+			hasOrderedKeys := false
+			for key := range msg.Content.Template.Parameters {
+				if _, err := strconv.Atoi(key); err == nil {
+					hasOrderedKeys = true
+					break
+				}
 			}
 
-			var orderedParams []orderedParam
-			var unorderedParams []whatsappTemplateParameter
+			if hasOrderedKeys {
+				// Handle ordered parameters (keys are "1", "2", "3", etc.)
+				type orderedParam struct {
+					order int
+					value any
+				}
 
-			// Separate numbered parameters from non-numbered ones
-			for key, value := range msg.Content.Template.Parameters {
-				if order, err := strconv.Atoi(key); err == nil {
-					// This is a numbered parameter (e.g., "1", "2")
-					orderedParams = append(orderedParams, orderedParam{
-						order: order,
-						key:   key,
-						value: value,
+				var orderedParams []orderedParam
+
+				for key, value := range msg.Content.Template.Parameters {
+					if order, err := strconv.Atoi(key); err == nil {
+						orderedParams = append(orderedParams, orderedParam{order, value})
+					}
+				}
+
+				// Sort by order
+				sort.Slice(orderedParams, func(i, j int) bool {
+					return orderedParams[i].order < orderedParams[j].order
+				})
+
+				// Add in correct order
+				for _, param := range orderedParams {
+					components[0].Parameters = append(components[0].Parameters, whatsappTemplateParameter{
+						Type: "text",
+						Text: fmt.Sprintf("%v", param.value),
 					})
-				} else {
-					// This is a non-numbered parameter - add as-is
-					unorderedParams = append(unorderedParams, whatsappTemplateParameter{
+				}
+			} else {
+				// Handle named parameters - add them as-is (order doesn't matter for named)
+				for _, value := range msg.Content.Template.Parameters {
+					components[0].Parameters = append(components[0].Parameters, whatsappTemplateParameter{
 						Type: "text",
 						Text: fmt.Sprintf("%v", value),
 					})
 				}
 			}
-
-			// Sort numbered parameters by their order
-			sort.Slice(orderedParams, func(i, j int) bool {
-				return orderedParams[i].order < orderedParams[j].order
-			})
-
-			// Add ordered parameters first (these are critical for template positioning)
-			for _, param := range orderedParams {
-				components[0].Parameters = append(components[0].Parameters, whatsappTemplateParameter{
-					Type: "text",
-					Text: fmt.Sprintf("%v", param.value),
-				})
-			}
-
-			// Add unordered parameters after
-			components[0].Parameters = append(components[0].Parameters, unorderedParams...)
 
 			whatsappMsg.Template.Components = components
 		}

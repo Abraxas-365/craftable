@@ -520,52 +520,66 @@ func (w *WhatsAppProvider) convertToWhatsAppMessage(
 		if msg.Content.Template == nil {
 			return nil, fmt.Errorf("template content is required for template messages")
 		}
-
-		// 1. Fetch the definitive template structure from the API (or cache)
-		template, err := w.GetTemplate(
-			ctx,
-			msg.Content.Template.Name,
-			msg.Content.Template.Language,
-		)
-		if err != nil {
-			logx.Error(
-				"Failed to get template structure for '%s'. Cannot build message. Error: %v",
-				msg.Content.Template.Name,
-				err,
-			)
-			return nil, fmt.Errorf(
-				"could not fetch template '%s': %w",
-				msg.Content.Template.Name,
-				err,
-			)
-		}
-
-		// 2. Build components using the universal, template-aware builder
-		components, err := w.buildComponentsFromAPITemplate(
-			template,
-			msg.Content.Template.Parameters,
-		)
-		if err != nil {
-			logx.Error(
-				"Failed to build template components for '%s': %v",
-				msg.Content.Template.Name,
-				err,
-			)
-			return nil, fmt.Errorf(
-				"could not build components for template '%s': %w",
-				msg.Content.Template.Name,
-				err,
-			)
-		}
-
-		// 3. Construct the final message
 		whatsappMsg.Type = "template"
 		whatsappMsg.Template = &whatsappTemplateMessage{
-			Name:       msg.Content.Template.Name,
-			Language:   whatsappLanguage{Code: msg.Content.Template.Language},
-			Components: components,
+			Name:     msg.Content.Template.Name,
+			Language: whatsappLanguage{Code: msg.Content.Template.Language},
 		}
 
+		// Convert parameters (improved for v23.0) - FIXED VERSION
+		if len(msg.Content.Template.Parameters) > 0 {
+			components := []whatsappTemplateComponent{
+				{
+					Type: "body",
+				},
+			}
+
+			// *** FIX: Sort parameters by their numeric keys for correct order ***
+			type orderedParam struct {
+				order int
+				key   string
+				value any
+			}
+
+			var orderedParams []orderedParam
+			var unorderedParams []whatsappTemplateParameter
+
+			// Separate numbered parameters from non-numbered ones
+			for key, value := range msg.Content.Template.Parameters {
+				if order, err := strconv.Atoi(key); err == nil {
+					// This is a numbered parameter (e.g., "1", "2")
+					orderedParams = append(orderedParams, orderedParam{
+						order: order,
+						key:   key,
+						value: value,
+					})
+				} else {
+					// This is a non-numbered parameter - add as-is
+					unorderedParams = append(unorderedParams, whatsappTemplateParameter{
+						Type: "text",
+						Text: fmt.Sprintf("%v", value),
+					})
+				}
+			}
+
+			// Sort numbered parameters by their order
+			sort.Slice(orderedParams, func(i, j int) bool {
+				return orderedParams[i].order < orderedParams[j].order
+			})
+
+			// Add ordered parameters first (these are critical for template positioning)
+			for _, param := range orderedParams {
+				components[0].Parameters = append(components[0].Parameters, whatsappTemplateParameter{
+					Type: "text",
+					Text: fmt.Sprintf("%v", param.value),
+				})
+			}
+
+			// Add unordered parameters after
+			components[0].Parameters = append(components[0].Parameters, unorderedParams...)
+
+			whatsappMsg.Template.Components = components
+		}
 	default:
 		return nil, fmt.Errorf("unsupported message type: %s", msg.Type)
 	}

@@ -19,9 +19,6 @@ type Sender interface {
 	// GetStatus retrieves message delivery status
 	GetStatus(ctx context.Context, messageID string) (*Status, error)
 
-	// ValidateNumber validates if a phone number can receive messages
-	ValidateNumber(ctx context.Context, phoneNumber string) (*NumberValidation, error)
-
 	// GetProviderName returns the provider name
 	GetProviderName() string
 }

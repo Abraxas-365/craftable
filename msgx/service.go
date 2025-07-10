@@ -164,33 +164,6 @@ func (s *Service) GetStatusWithProvider(ctx context.Context, providerName string
 	return status, nil
 }
 
-// ValidateNumber validates a phone number using the default sender
-func (s *Service) ValidateNumber(ctx context.Context, phoneNumber string) (*NumberValidation, error) {
-	return s.ValidateNumberWithProvider(ctx, s.defaultSender, phoneNumber)
-}
-
-// ValidateNumberWithProvider validates a phone number using a specific sender
-func (s *Service) ValidateNumberWithProvider(ctx context.Context, providerName string, phoneNumber string) (*NumberValidation, error) {
-	sender, exists := s.senders[providerName]
-	if !exists {
-		return nil, Registry.New(ErrProviderNotFound).
-			WithDetail("provider", providerName).
-			WithDetail("available_senders", s.getSenderNames())
-	}
-
-	validation, err := sender.ValidateNumber(ctx, phoneNumber)
-	if err != nil {
-		return nil, Registry.New(ErrNumberValidationFailed).
-			WithCause(err).
-			WithDetail("provider", providerName).
-			WithDetail("phone_number", phoneNumber)
-	}
-
-	return validation, nil
-}
-
-// ========== Receiving Methods ==========
-
 // SetupWebhooks configures webhooks for all registered receivers
 func (s *Service) SetupWebhooks(port int, baseURL string) error {
 	s.webhookServer = NewWebhookServer(port)

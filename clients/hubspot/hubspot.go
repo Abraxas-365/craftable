@@ -631,8 +631,8 @@ type PropertyDefinition struct {
 	ExternalOptions      bool                  `json:"externalOptions,omitempty"`
 	ReferencedObjectType string                `json:"referencedObjectType,omitempty"`
 	DataSensitivity      string                `json:"dataSensitivity,omitempty"` // Add this line
-	CreatedAt            *int64                `json:"createdAt,omitempty"`
-	UpdatedAt            *int64                `json:"updatedAt,omitempty"`
+	CreatedAt            time.Time             `json:"createdAt,omitempty"`
+	UpdatedAt            time.Time             `json:"updatedAt,omitempty"`
 	CreatedUserId        string                `json:"createdUserId,omitempty"`
 	UpdatedUserId        string                `json:"updatedUserId,omitempty"`
 	ModificationMetadata *ModificationMetadata `json:"modificationMetadata,omitempty"`

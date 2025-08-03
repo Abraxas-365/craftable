@@ -120,33 +120,35 @@ type AssociationSpec struct {
 }
 
 // ============================================================================
-// WORKFLOW TYPES
+// WORKFLOW TYPES (Updated to match actual HubSpot API response)
 // ============================================================================
 
-// Workflow represents a HubSpot workflow
+// Workflow represents a HubSpot workflow (matches actual API response)
 type Workflow struct {
-	ID                  int                `json:"id"`
-	Name                string             `json:"name"`
-	Type                string             `json:"type"`
-	Enabled             bool               `json:"enabled"`
-	Actions             []WorkflowAction   `json:"actions"`
-	Enrollment          WorkflowEnrollment `json:"enrollment"`
-	PortalID            int                `json:"portalId,omitempty"`
-	CreatedAt           *int64             `json:"createdAt,omitempty"`
-	UpdatedAt           *int64             `json:"updatedAt,omitempty"`
-	MigrationStatus     *MigrationStatus   `json:"migrationStatus,omitempty"`
-	CreationSource      *CreationSource    `json:"creationSource,omitempty"`
-	UpdateSource        *UpdateSource      `json:"updateSource,omitempty"`
-	ContactListIds      *ContactListIds    `json:"contactListIds,omitempty"`
-	PersonaTagIds       []string           `json:"personaTagIds,omitempty"`
-	ContactCounts       *ContactCounts     `json:"contactCounts,omitempty"`
-	InsertedAt          *int64             `json:"insertedAt,omitempty"`
-	LastUpdatedByUserID int                `json:"lastUpdatedByUserId,omitempty"`
+	ID                   int                `json:"id"`
+	Name                 string             `json:"name"`
+	Type                 string             `json:"type"`
+	Enabled              bool               `json:"enabled"`
+	Description          string             `json:"description,omitempty"`
+	Actions              []WorkflowAction   `json:"actions,omitempty"`
+	Enrollment           WorkflowEnrollment `json:"enrollment,omitzero"`
+	PortalID             int                `json:"portalId,omitempty"`
+	CreatedAt            *int64             `json:"createdAt,omitempty"`
+	UpdatedAt            *int64             `json:"updatedAt,omitempty"`
+	InsertedAt           *int64             `json:"insertedAt,omitempty"`
+	MigrationStatus      *MigrationStatus   `json:"migrationStatus,omitempty"`
+	CreationSource       *CreationSource    `json:"creationSource,omitempty"`
+	UpdateSource         *UpdateSource      `json:"updateSource,omitempty"`
+	ContactListIds       *ContactListIds    `json:"contactListIds,omitempty"`
+	PersonaTagIds        []string           `json:"personaTagIds,omitempty"`
+	ContactCounts        *ContactCounts     `json:"contactCounts,omitempty"`
+	LastUpdatedByUserID  int                `json:"lastUpdatedByUserId,omitempty"`
+	OriginalAuthorUserID int                `json:"originalAuthorUserId,omitempty"`
 }
 
 // WorkflowAction represents an action within a workflow
 type WorkflowAction struct {
-	ID             string         `json:"id"`
+	ID             string         `json:"id,omitempty"`
 	Type           string         `json:"type"`
 	Settings       map[string]any `json:"settings,omitempty"`
 	DelayMillis    int            `json:"delayMillis,omitempty"`
@@ -155,7 +157,7 @@ type WorkflowAction struct {
 
 // WorkflowEnrollment represents workflow enrollment settings
 type WorkflowEnrollment struct {
-	CriteriaType         string         `json:"criteriaType"`
+	CriteriaType         string         `json:"criteriaType,omitempty"`
 	Criteria             map[string]any `json:"criteria,omitempty"`
 	ReenrollmentCriteria map[string]any `json:"reenrollmentCriteria,omitempty"`
 	SuppressionLists     []int          `json:"suppressionLists,omitempty"`
@@ -189,32 +191,31 @@ type UpdateSource struct {
 
 // SourceApplication represents the application source
 type SourceApplication struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	Source      string `json:"source"` // This matches the actual API response
+	ServiceName string `json:"serviceName,omitempty"`
 }
 
-// User represents a HubSpot user
+// User represents a HubSpot user (matches actual API response)
 type User struct {
-	ID        int    `json:"id"`
-	Email     string `json:"email"`
-	FirstName string `json:"firstName"`
-	LastName  string `json:"lastName"`
+	UserID    int    `json:"userId"`    // This matches the actual API response
+	UserEmail string `json:"userEmail"` // This matches the actual API response
 }
 
-// ContactListIds represents contact list IDs for workflows
+// ContactListIds represents contact list IDs for workflows (matches actual API response)
 type ContactListIds struct {
-	Enrolled  []int `json:"enrolled,omitempty"`
-	Active    []int `json:"active,omitempty"`
-	Completed []int `json:"completed,omitempty"`
-	Succeeded []int `json:"succeeded,omitempty"`
-}
-
-// ContactCounts represents contact counts for workflows
-type ContactCounts struct {
 	Enrolled  int `json:"enrolled"`
 	Active    int `json:"active"`
 	Completed int `json:"completed"`
 	Succeeded int `json:"succeeded"`
+}
+
+// ContactCounts represents contact counts for workflows (matches actual API response)
+type ContactCounts struct {
+	Enrolled int `json:"enrolled"`
+	Active   int `json:"active"`
+	// Note: The API response shows these fields, but they might not always be present
+	Completed int `json:"completed,omitempty"`
+	Succeeded int `json:"succeeded,omitempty"`
 }
 
 // WorkflowListResponse represents a list of workflows response
@@ -252,6 +253,8 @@ type WorkflowFilter struct {
 	UpdatedAfter  *int64 `json:"updatedAfter,omitempty"`
 	UpdatedBefore *int64 `json:"updatedBefore,omitempty"`
 }
+
+// ... rest of the types remain the same (CONTACT, COMPANY, DEAL, etc.)
 
 // ============================================================================
 // CONTACT TYPES

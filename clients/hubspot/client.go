@@ -1207,3 +1207,337 @@ func (mw *MultipartWriter) Close() error {
 	return mw.writer.Close()
 }
 
+// ============================================================================
+// PROPERTY METHODS
+// ============================================================================
+
+// GetAllProperties fetches all properties for an object type
+func (c *Client) GetAllProperties(ctx context.Context, objectType string, archived bool) (*PropertyListResponse, error) {
+	logx.Debug("Fetching all properties for object type: %s", objectType)
+
+	params := make(map[string]string)
+	if archived {
+		params["archived"] = "true"
+	}
+
+	var response PropertyListResponse
+	endpoint := fmt.Sprintf("/crm/v3/properties/%s", objectType)
+	err := c.Get(ctx, endpoint, params, &response)
+	if err != nil {
+		return nil, err
+	}
+
+	return &response, nil
+}
+
+// GetPropertyByName fetches a property by name for an object type
+func (c *Client) GetPropertyByName(ctx context.Context, objectType, propertyName string, archived bool) (*PropertyDefinition, error) {
+	logx.Debug("Fetching property %s for object type: %s", propertyName, objectType)
+
+	params := make(map[string]string)
+	if archived {
+		params["archived"] = "true"
+	}
+
+	var property PropertyDefinition
+	endpoint := fmt.Sprintf("/crm/v3/properties/%s/%s", objectType, propertyName)
+	err := c.Get(ctx, endpoint, params, &property)
+	if err != nil {
+		if errx.IsCode(err, ErrHubSpotNotFound) {
+			return nil, NewResourceNotFoundError("property", propertyName)
+		}
+		return nil, err
+	}
+
+	return &property, nil
+}
+
+// CreateProperty creates a new property for an object type
+func (c *Client) CreateProperty(ctx context.Context, objectType string, property *PropertyCreateRequest) (*PropertyDefinition, error) {
+	logx.Debug("Creating property %s for object type: %s", property.Name, objectType)
+
+	var result PropertyDefinition
+	endpoint := fmt.Sprintf("/crm/v3/properties/%s", objectType)
+	err := c.Post(ctx, endpoint, property, &result)
+	if err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+// UpdateProperty updates an existing property
+func (c *Client) UpdateProperty(ctx context.Context, objectType, propertyName string, property *PropertyUpdateRequest) (*PropertyDefinition, error) {
+	logx.Debug("Updating property %s for object type: %s", propertyName, objectType)
+
+	var result PropertyDefinition
+	endpoint := fmt.Sprintf("/crm/v3/properties/%s/%s", objectType, propertyName)
+	err := c.Patch(ctx, endpoint, property, &result)
+	if err != nil {
+		if errx.IsCode(err, ErrHubSpotNotFound) {
+			return nil, NewResourceNotFoundError("property", propertyName)
+		}
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+// DeleteProperty deletes a property (archives it)
+func (c *Client) DeleteProperty(ctx context.Context, objectType, propertyName string) error {
+	logx.Debug("Deleting property %s for object type: %s", propertyName, objectType)
+
+	endpoint := fmt.Sprintf("/crm/v3/properties/%s/%s", objectType, propertyName)
+	err := c.Delete(ctx, endpoint)
+	if err != nil {
+		if errx.IsCode(err, ErrHubSpotNotFound) {
+			return NewResourceNotFoundError("property", propertyName)
+		}
+		return err
+	}
+
+	return nil
+}
+
+// BatchCreateProperties creates multiple properties in a batch
+func (c *Client) BatchCreateProperties(ctx context.Context, objectType string, properties []PropertyCreateRequest) (*BatchResponse, error) {
+	logx.Debug("Batch creating %d properties for object type: %s", len(properties), objectType)
+
+	inputs := make([]any, len(properties))
+	for i, property := range properties {
+		inputs[i] = property
+	}
+
+	batchReq := &BatchRequest{Inputs: inputs}
+	var response BatchResponse
+	endpoint := fmt.Sprintf("/crm/v3/properties/%s/batch/create", objectType)
+	err := c.BatchRequest(ctx, endpoint, batchReq, &response)
+	if err != nil {
+		return nil, err
+	}
+
+	return &response, nil
+}
+
+// BatchUpdateProperties updates multiple properties in a batch
+func (c *Client) BatchUpdateProperties(ctx context.Context, objectType string, properties []PropertyUpdateRequest) (*BatchResponse, error) {
+	logx.Debug("Batch updating %d properties for object type: %s", len(properties), objectType)
+
+	inputs := make([]any, len(properties))
+	for i, property := range properties {
+		inputs[i] = property
+	}
+
+	batchReq := &BatchRequest{Inputs: inputs}
+	var response BatchResponse
+	endpoint := fmt.Sprintf("/crm/v3/properties/%s/batch/update", objectType)
+	err := c.BatchRequest(ctx, endpoint, batchReq, &response)
+	if err != nil {
+		return nil, err
+	}
+
+	return &response, nil
+}
+
+// BatchArchiveProperties archives multiple properties in a batch
+func (c *Client) BatchArchiveProperties(ctx context.Context, objectType string, propertyNames []string) (*BatchResponse, error) {
+	logx.Debug("Batch archiving %d properties for object type: %s", len(propertyNames), objectType)
+
+	inputs := make([]any, len(propertyNames))
+	for i, name := range propertyNames {
+		inputs[i] = map[string]string{"name": name}
+	}
+
+	batchReq := &BatchRequest{Inputs: inputs}
+	var response BatchResponse
+	endpoint := fmt.Sprintf("/crm/v3/properties/%s/batch/archive", objectType)
+	err := c.BatchRequest(ctx, endpoint, batchReq, &response)
+	if err != nil {
+		return nil, err
+	}
+
+	return &response, nil
+}
+
+// ============================================================================
+// PROPERTY GROUP METHODS
+// ============================================================================
+
+// GetAllPropertyGroups fetches all property groups for an object type
+func (c *Client) GetAllPropertyGroups(ctx context.Context, objectType string) (*PropertyGroupListResponse, error) {
+	logx.Debug("Fetching all property groups for object type: %s", objectType)
+
+	var response PropertyGroupListResponse
+	endpoint := fmt.Sprintf("/crm/v3/properties/%s/groups", objectType)
+	err := c.Get(ctx, endpoint, nil, &response)
+	if err != nil {
+		return nil, err
+	}
+
+	return &response, nil
+}
+
+// GetPropertyGroupByName fetches a property group by name for an object type
+func (c *Client) GetPropertyGroupByName(ctx context.Context, objectType, groupName string) (*PropertyGroup, error) {
+	logx.Debug("Fetching property group %s for object type: %s", groupName, objectType)
+
+	var group PropertyGroup
+	endpoint := fmt.Sprintf("/crm/v3/properties/%s/groups/%s", objectType, groupName)
+	err := c.Get(ctx, endpoint, nil, &group)
+	if err != nil {
+		if errx.IsCode(err, ErrHubSpotNotFound) {
+			return nil, NewResourceNotFoundError("property group", groupName)
+		}
+		return nil, err
+	}
+
+	return &group, nil
+}
+
+// CreatePropertyGroup creates a new property group for an object type
+func (c *Client) CreatePropertyGroup(ctx context.Context, objectType string, group *PropertyGroupCreateRequest) (*PropertyGroup, error) {
+	logx.Debug("Creating property group %s for object type: %s", group.Name, objectType)
+
+	var result PropertyGroup
+	endpoint := fmt.Sprintf("/crm/v3/properties/%s/groups", objectType)
+	err := c.Post(ctx, endpoint, group, &result)
+	if err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+// UpdatePropertyGroup updates an existing property group
+func (c *Client) UpdatePropertyGroup(ctx context.Context, objectType, groupName string, group *PropertyGroupUpdateRequest) (*PropertyGroup, error) {
+	logx.Debug("Updating property group %s for object type: %s", groupName, objectType)
+
+	var result PropertyGroup
+	endpoint := fmt.Sprintf("/crm/v3/properties/%s/groups/%s", objectType, groupName)
+	err := c.Patch(ctx, endpoint, group, &result)
+	if err != nil {
+		if errx.IsCode(err, ErrHubSpotNotFound) {
+			return nil, NewResourceNotFoundError("property group", groupName)
+		}
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+// DeletePropertyGroup deletes a property group (archives it)
+func (c *Client) DeletePropertyGroup(ctx context.Context, objectType, groupName string) error {
+	logx.Debug("Deleting property group %s for object type: %s", groupName, objectType)
+
+	endpoint := fmt.Sprintf("/crm/v3/properties/%s/groups/%s", objectType, groupName)
+	err := c.Delete(ctx, endpoint)
+	if err != nil {
+		if errx.IsCode(err, ErrHubSpotNotFound) {
+			return NewResourceNotFoundError("property group", groupName)
+		}
+		return err
+	}
+
+	return nil
+}
+
+// ============================================================================
+// PROPERTY CONVENIENCE METHODS
+// ============================================================================
+
+// GetContactProperties gets all properties for contacts
+func (c *Client) GetContactProperties(ctx context.Context, archived bool) (*PropertyListResponse, error) {
+	return c.GetAllProperties(ctx, "contacts", archived)
+}
+
+// GetCompanyProperties gets all properties for companies
+func (c *Client) GetCompanyProperties(ctx context.Context, archived bool) (*PropertyListResponse, error) {
+	return c.GetAllProperties(ctx, "companies", archived)
+}
+
+// GetDealProperties gets all properties for deals
+func (c *Client) GetDealProperties(ctx context.Context, archived bool) (*PropertyListResponse, error) {
+	return c.GetAllProperties(ctx, "deals", archived)
+}
+
+// GetTicketProperties gets all properties for tickets
+func (c *Client) GetTicketProperties(ctx context.Context, archived bool) (*PropertyListResponse, error) {
+	return c.GetAllProperties(ctx, "tickets", archived)
+}
+
+// CreateContactProperty creates a new contact property
+func (c *Client) CreateContactProperty(ctx context.Context, property *PropertyCreateRequest) (*PropertyDefinition, error) {
+	return c.CreateProperty(ctx, "contacts", property)
+}
+
+// CreateCompanyProperty creates a new company property
+func (c *Client) CreateCompanyProperty(ctx context.Context, property *PropertyCreateRequest) (*PropertyDefinition, error) {
+	return c.CreateProperty(ctx, "companies", property)
+}
+
+// CreateDealProperty creates a new deal property
+func (c *Client) CreateDealProperty(ctx context.Context, property *PropertyCreateRequest) (*PropertyDefinition, error) {
+	return c.CreateProperty(ctx, "deals", property)
+}
+
+// CreateTicketProperty creates a new ticket property
+func (c *Client) CreateTicketProperty(ctx context.Context, property *PropertyCreateRequest) (*PropertyDefinition, error) {
+	return c.CreateProperty(ctx, "tickets", property)
+}
+
+// SearchPropertiesByName searches for properties by name pattern
+func (c *Client) SearchPropertiesByName(ctx context.Context, objectType, namePattern string) ([]*PropertyDefinition, error) {
+	response, err := c.GetAllProperties(ctx, objectType, false)
+	if err != nil {
+		return nil, err
+	}
+
+	var filtered []*PropertyDefinition
+	pattern := strings.ToLower(namePattern)
+
+	for i := range response.Results {
+		property := &response.Results[i]
+		if strings.Contains(strings.ToLower(property.Name), pattern) ||
+			strings.Contains(strings.ToLower(property.Label), pattern) {
+			filtered = append(filtered, property)
+		}
+	}
+
+	return filtered, nil
+}
+
+// GetPropertiesByGroup gets all properties in a specific group
+func (c *Client) GetPropertiesByGroup(ctx context.Context, objectType, groupName string) ([]*PropertyDefinition, error) {
+	response, err := c.GetAllProperties(ctx, objectType, false)
+	if err != nil {
+		return nil, err
+	}
+
+	var filtered []*PropertyDefinition
+	for i := range response.Results {
+		property := &response.Results[i]
+		if property.GroupName == groupName {
+			filtered = append(filtered, property)
+		}
+	}
+
+	return filtered, nil
+}
+
+// GetPropertiesByType gets all properties of a specific type
+func (c *Client) GetPropertiesByType(ctx context.Context, objectType, propertyType string) ([]*PropertyDefinition, error) {
+	response, err := c.GetAllProperties(ctx, objectType, false)
+	if err != nil {
+		return nil, err
+	}
+
+	var filtered []*PropertyDefinition
+	for i := range response.Results {
+		property := &response.Results[i]
+		if property.Type == propertyType {
+			filtered = append(filtered, property)
+		}
+	}
+
+	return filtered, nil
+}

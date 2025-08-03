@@ -254,8 +254,6 @@ type WorkflowFilter struct {
 	UpdatedBefore *int64 `json:"updatedBefore,omitempty"`
 }
 
-// ... rest of the types remain the same (CONTACT, COMPANY, DEAL, etc.)
-
 // ============================================================================
 // CONTACT TYPES
 // ============================================================================
@@ -609,4 +607,113 @@ func BoolToString(b bool) string {
 // StringToBool safely converts string to bool
 func StringToBool(s string) (bool, error) {
 	return strconv.ParseBool(s)
+}
+
+// ============================================================================
+// PROPERTY TYPES
+// ============================================================================
+
+// PropertyDefinition represents a HubSpot property definition
+type PropertyDefinition struct {
+	Name                 string                `json:"name"`
+	Label                string                `json:"label"`
+	Type                 string                `json:"type"`
+	FieldType            string                `json:"fieldType"`
+	GroupName            string                `json:"groupName,omitempty"`
+	Description          string                `json:"description,omitempty"`
+	Options              []PropertyOption      `json:"options,omitempty"`
+	DisplayOrder         int                   `json:"displayOrder,omitempty"`
+	HasUniqueValue       bool                  `json:"hasUniqueValue,omitempty"`
+	Hidden               bool                  `json:"hidden,omitempty"`
+	FormField            bool                  `json:"formField,omitempty"`
+	Deleted              bool                  `json:"deleted,omitempty"`
+	CalculationFormula   string                `json:"calculationFormula,omitempty"`
+	ExternalOptions      bool                  `json:"externalOptions,omitempty"`
+	ReferencedObjectType string                `json:"referencedObjectType,omitempty"`
+	CreatedAt            *int64                `json:"createdAt,omitempty"`
+	UpdatedAt            *int64                `json:"updatedAt,omitempty"`
+	CreatedUserId        string                `json:"createdUserId,omitempty"`
+	UpdatedUserId        string                `json:"updatedUserId,omitempty"`
+	ModificationMetadata *ModificationMetadata `json:"modificationMetadata,omitempty"`
+}
+
+// PropertyOption represents an option for enumeration properties
+type PropertyOption struct {
+	Label        string `json:"label"`
+	Value        string `json:"value"`
+	Description  string `json:"description,omitempty"`
+	DisplayOrder int    `json:"displayOrder,omitempty"`
+	Hidden       bool   `json:"hidden,omitempty"`
+}
+
+// ModificationMetadata represents metadata about property modifications
+type ModificationMetadata struct {
+	Archivable         bool `json:"archivable"`
+	ReadOnlyValue      bool `json:"readOnlyValue"`
+	ReadOnlyDefinition bool `json:"readOnlyDefinition"`
+}
+
+// PropertyGroup represents a HubSpot property group
+type PropertyGroup struct {
+	Name         string `json:"name"`
+	Label        string `json:"label"`
+	DisplayOrder int    `json:"displayOrder"`
+	Archived     bool   `json:"archived,omitempty"`
+}
+
+// PropertyCreateRequest represents a request to create a property
+type PropertyCreateRequest struct {
+	Name                 string           `json:"name"`
+	Label                string           `json:"label"`
+	Type                 string           `json:"type"`
+	FieldType            string           `json:"fieldType"`
+	GroupName            string           `json:"groupName,omitempty"`
+	Description          string           `json:"description,omitempty"`
+	Options              []PropertyOption `json:"options,omitempty"`
+	DisplayOrder         int              `json:"displayOrder,omitempty"`
+	HasUniqueValue       bool             `json:"hasUniqueValue,omitempty"`
+	Hidden               bool             `json:"hidden,omitempty"`
+	FormField            bool             `json:"formField,omitempty"`
+	CalculationFormula   string           `json:"calculationFormula,omitempty"`
+	ExternalOptions      bool             `json:"externalOptions,omitempty"`
+	ReferencedObjectType string           `json:"referencedObjectType,omitempty"`
+}
+
+// PropertyUpdateRequest represents a request to update a property
+type PropertyUpdateRequest struct {
+	Label                *string           `json:"label,omitempty"`
+	GroupName            *string           `json:"groupName,omitempty"`
+	Description          *string           `json:"description,omitempty"`
+	Options              *[]PropertyOption `json:"options,omitempty"`
+	DisplayOrder         *int              `json:"displayOrder,omitempty"`
+	Hidden               *bool             `json:"hidden,omitempty"`
+	FormField            *bool             `json:"formField,omitempty"`
+	CalculationFormula   *string           `json:"calculationFormula,omitempty"`
+	ExternalOptions      *bool             `json:"externalOptions,omitempty"`
+	ReferencedObjectType *string           `json:"referencedObjectType,omitempty"`
+}
+
+// PropertyListResponse represents a list of properties response
+type PropertyListResponse struct {
+	Results []PropertyDefinition `json:"results"`
+	Paging  *Paging              `json:"paging,omitempty"`
+}
+
+// PropertyGroupCreateRequest represents a request to create a property group
+type PropertyGroupCreateRequest struct {
+	Name         string `json:"name"`
+	Label        string `json:"label"`
+	DisplayOrder int    `json:"displayOrder,omitempty"`
+}
+
+// PropertyGroupUpdateRequest represents a request to update a property group
+type PropertyGroupUpdateRequest struct {
+	Label        *string `json:"label,omitempty"`
+	DisplayOrder *int    `json:"displayOrder,omitempty"`
+}
+
+// PropertyGroupListResponse represents a list of property groups response
+type PropertyGroupListResponse struct {
+	Results []PropertyGroup `json:"results"`
+	Paging  *Paging         `json:"paging,omitempty"`
 }

@@ -76,9 +76,9 @@ type BatchResponse struct {
 	Results     []any             `json:"results,omitempty"`
 	NumErrors   int               `json:"numErrors,omitempty"`
 	Errors      []BatchError      `json:"errors,omitempty"`
-	RequestedAt *int64            `json:"requestedAt,omitempty"`
-	StartedAt   *int64            `json:"startedAt,omitempty"`
-	CompletedAt *int64            `json:"completedAt,omitempty"`
+	RequestedAt *time.Time        `json:"requestedAt,omitempty"`
+	StartedAt   *time.Time        `json:"startedAt,omitempty"`
+	CompletedAt *time.Time        `json:"completedAt,omitempty"`
 	Links       map[string]string `json:"links,omitempty"`
 }
 
@@ -631,8 +631,8 @@ type PropertyDefinition struct {
 	ExternalOptions      bool                  `json:"externalOptions,omitempty"`
 	ReferencedObjectType string                `json:"referencedObjectType,omitempty"`
 	DataSensitivity      string                `json:"dataSensitivity,omitempty"` // Add this line
-	CreatedAt            time.Time             `json:"createdAt,omitempty"`
-	UpdatedAt            time.Time             `json:"updatedAt,omitempty"`
+	CreatedAt            *time.Time            `json:"createdAt,omitempty"`
+	UpdatedAt            *time.Time            `json:"updatedAt,omitempty"`
 	CreatedUserId        string                `json:"createdUserId,omitempty"`
 	UpdatedUserId        string                `json:"updatedUserId,omitempty"`
 	ModificationMetadata *ModificationMetadata `json:"modificationMetadata,omitempty"`

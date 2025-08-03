@@ -1541,3 +1541,374 @@ func (c *Client) GetPropertiesByType(ctx context.Context, objectType, propertyTy
 
 	return filtered, nil
 }
+
+// ============================================================================
+// FORM METHODS
+// ============================================================================
+
+// GetAllForms fetches all forms from HubSpot
+func (c *Client) GetAllForms(ctx context.Context) (*FormListResponse, error) {
+	logx.Debug("Fetching all forms from HubSpot")
+
+	var hsResponse any // Changed from map[string]interface{} to interface{}
+	err := c.Get(ctx, "/forms/v2/forms", nil, &hsResponse)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert response - HubSpot forms API can return different formats
+	var forms []Form
+
+	// Check if response is a map with "results" key
+	if responseMap, ok := hsResponse.(map[string]any); ok {
+		if results, ok := responseMap["results"].([]any); ok {
+			forms = make([]Form, 0, len(results))
+			for _, result := range results {
+				if formMap, ok := result.(map[string]any); ok {
+					form := c.convertHubSpotForm(formMap)
+					forms = append(forms, form)
+				}
+			}
+		}
+	} else if formsArray, ok := hsResponse.([]any); ok {
+		// Sometimes HubSpot returns direct array
+		forms = make([]Form, 0, len(formsArray))
+		for _, result := range formsArray {
+			if formMap, ok := result.(map[string]any); ok {
+				form := c.convertHubSpotForm(formMap)
+				forms = append(forms, form)
+			}
+		}
+	}
+
+	response := &FormListResponse{
+		Results: forms,
+		Paging:  nil, // HubSpot forms API v2 doesn't use standard pagination
+	}
+
+	logx.Debug("Successfully fetched %d forms", len(forms))
+	return response, nil
+}
+
+// GetFormByID fetches a single form by ID
+func (c *Client) GetFormByID(ctx context.Context, formID string) (*Form, error) {
+	logx.Debug("Fetching form by ID: %s", formID)
+
+	var hsForm map[string]any
+	endpoint := fmt.Sprintf("/forms/v2/forms/%s", formID)
+	err := c.Get(ctx, endpoint, nil, &hsForm)
+	if err != nil {
+		if errx.IsCode(err, ErrHubSpotNotFound) {
+			return nil, NewResourceNotFoundError("form", formID)
+		}
+		return nil, err
+	}
+
+	form := c.convertHubSpotForm(hsForm)
+	return &form, nil
+}
+
+// CreateForm creates a new form
+func (c *Client) CreateForm(ctx context.Context, form *FormCreateRequest) (*Form, error) {
+	logx.Debug("Creating form: %s", form.Name)
+
+	var hsForm map[string]any
+	err := c.Post(ctx, "/forms/v2/forms", form, &hsForm)
+	if err != nil {
+		return nil, err
+	}
+
+	domainForm := c.convertHubSpotForm(hsForm)
+	return &domainForm, nil
+}
+
+// UpdateForm updates an existing form
+func (c *Client) UpdateForm(ctx context.Context, formID string, form *FormUpdateRequest) (*Form, error) {
+	logx.Debug("Updating form: %s", formID)
+
+	var hsForm map[string]any
+	endpoint := fmt.Sprintf("/forms/v2/forms/%s", formID)
+	err := c.Put(ctx, endpoint, form, &hsForm)
+	if err != nil {
+		if errx.IsCode(err, ErrHubSpotNotFound) {
+			return nil, NewResourceNotFoundError("form", formID)
+		}
+		return nil, err
+	}
+
+	domainForm := c.convertHubSpotForm(hsForm)
+	return &domainForm, nil
+}
+
+// DeleteForm deletes a form
+func (c *Client) DeleteForm(ctx context.Context, formID string) error {
+	logx.Debug("Deleting form: %s", formID)
+
+	endpoint := fmt.Sprintf("/forms/v2/forms/%s", formID)
+	err := c.Delete(ctx, endpoint)
+	if err != nil {
+		if errx.IsCode(err, ErrHubSpotNotFound) {
+			return NewResourceNotFoundError("form", formID)
+		}
+		return err
+	}
+
+	return nil
+}
+
+// GetFormSubmissions retrieves form submissions
+func (c *Client) GetFormSubmissions(ctx context.Context, formID string, limit int, after string) (*FormSubmissionListResponse, error) {
+	logx.Debug("Fetching form submissions for form: %s", formID)
+
+	params := make(map[string]string)
+	if limit > 0 {
+		params["limit"] = strconv.Itoa(limit)
+	}
+	if after != "" {
+		params["after"] = after
+	}
+
+	var hsResponse map[string]any
+	endpoint := fmt.Sprintf("/form-integrations/v1/submissions/forms/%s", formID)
+	err := c.Get(ctx, endpoint, params, &hsResponse)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert submissions
+	var submissions []FormSubmission
+	if results, ok := hsResponse["results"].([]any); ok {
+		submissions = make([]FormSubmission, 0, len(results))
+		for _, result := range results {
+			if submissionMap, ok := result.(map[string]any); ok {
+				submission := c.convertFormSubmission(submissionMap)
+				submissions = append(submissions, submission)
+			}
+		}
+	}
+
+	response := &FormSubmissionListResponse{
+		Results: submissions,
+		Paging:  nil, // Convert if available in response
+	}
+
+	return response, nil
+}
+
+// SubmitForm submits a form
+func (c *Client) SubmitForm(ctx context.Context, formID string, submission *FormSubmission) error {
+	logx.Debug("Submitting form: %s", formID)
+
+	endpoint := fmt.Sprintf("/forms/v3/forms/%s/submit", formID)
+	err := c.Post(ctx, endpoint, submission, nil)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// ============================================================================
+// FORM HELPER METHODS
+// ============================================================================
+
+// convertHubSpotForm converts HubSpot form response to Form struct
+func (c *Client) convertHubSpotForm(hsForm map[string]any) Form {
+	form := Form{
+		ID:   c.getStringFromMap(hsForm, "guid"),
+		Name: c.getStringFromMap(hsForm, "name"),
+	}
+
+	// Convert timestamps
+	if createdAt := c.getInt64FromMap(hsForm, "createdAt"); createdAt != nil {
+		form.CreatedAt = createdAt
+	}
+	if updatedAt := c.getInt64FromMap(hsForm, "updatedAt"); updatedAt != nil {
+		form.UpdatedAt = updatedAt
+	}
+
+	// Convert other form properties
+	form.SubmitText = c.getStringFromMap(hsForm, "submitText")
+	form.Redirect = c.getStringFromMap(hsForm, "redirect")
+	form.CssClass = c.getStringFromMap(hsForm, "cssClass")
+	form.NotifyRecipients = c.getStringFromMap(hsForm, "notifyRecipients")
+	form.LeadNurturingCampaign = c.getStringFromMap(hsForm, "leadNurturingCampaignId")
+	form.FollowUpAction = c.getStringFromMap(hsForm, "followUpActionType")
+
+	// Convert form field groups
+	if formFieldGroups, ok := hsForm["formFieldGroups"].([]any); ok {
+		form.FormFieldGroups = c.convertFormFieldGroups(formFieldGroups)
+	}
+
+	return form
+}
+
+// convertFormFieldGroups converts HubSpot form field groups
+func (c *Client) convertFormFieldGroups(hsGroups []any) []FormFieldGroup {
+	groups := make([]FormFieldGroup, 0, len(hsGroups))
+
+	for _, groupInterface := range hsGroups {
+		if groupMap, ok := groupInterface.(map[string]any); ok {
+			group := FormFieldGroup{
+				Default:      c.getBoolFromMap(groupMap, "default"),
+				IsSmartGroup: c.getBoolFromMap(groupMap, "isSmartGroup"),
+				GroupType:    c.getStringFromMap(groupMap, "groupType"),
+			}
+
+			// Convert fields
+			if fields, ok := groupMap["fields"].([]any); ok {
+				group.Fields = c.convertFormFields(fields)
+			}
+
+			// Convert rich text
+			if richText, ok := groupMap["richText"].(map[string]any); ok {
+				group.RichText = richText
+			}
+
+			groups = append(groups, group)
+		}
+	}
+
+	return groups
+}
+
+// convertFormFields converts HubSpot form fields
+func (c *Client) convertFormFields(hsFields []any) []FormField {
+	fields := make([]FormField, 0, len(hsFields))
+
+	for _, fieldInterface := range hsFields {
+		if fieldMap, ok := fieldInterface.(map[string]any); ok {
+			field := FormField{
+				Name:                 c.getStringFromMap(fieldMap, "name"),
+				Label:                c.getStringFromMap(fieldMap, "label"),
+				FieldType:            c.getStringFromMap(fieldMap, "fieldType"),
+				ObjectTypeId:         c.getStringFromMap(fieldMap, "objectTypeId"),
+				Description:          c.getStringFromMap(fieldMap, "description"),
+				GroupName:            c.getStringFromMap(fieldMap, "groupName"),
+				DisplayOrder:         c.getIntFromMap(fieldMap, "displayOrder"),
+				Required:             c.getBoolFromMap(fieldMap, "required"),
+				Enabled:              c.getBoolFromMap(fieldMap, "enabled"),
+				Hidden:               c.getBoolFromMap(fieldMap, "hidden"),
+				DefaultValue:         c.getStringFromMap(fieldMap, "defaultValue"),
+				Placeholder:          c.getStringFromMap(fieldMap, "placeholder"),
+				UseCountryCodeSelect: c.getBoolFromMap(fieldMap, "useCountryCodeSelect"),
+				AllowMultipleFiles:   c.getBoolFromMap(fieldMap, "allowMultipleFiles"),
+				LabelHidden:          c.getBoolFromMap(fieldMap, "labelHidden"),
+				PropertyObjectType:   c.getStringFromMap(fieldMap, "propertyObjectType"),
+			}
+
+			// Convert options
+			if options, ok := fieldMap["options"].([]any); ok {
+				field.Options = c.convertFormFieldOptions(options)
+			}
+
+			// Convert validation, dependent fields, metadata as maps
+			if validation, ok := fieldMap["validation"].(map[string]any); ok {
+				field.Validation = validation
+			}
+			if dependentFields, ok := fieldMap["dependentFields"].([]map[string]any); ok {
+				field.DependentFields = dependentFields
+			}
+			if metaData, ok := fieldMap["metaData"].([]map[string]any); ok {
+				field.MetaData = metaData
+			}
+
+			fields = append(fields, field)
+		}
+	}
+
+	return fields
+}
+
+// convertFormFieldOptions converts HubSpot form field options
+func (c *Client) convertFormFieldOptions(hsOptions []any) []FormFieldOption {
+	options := make([]FormFieldOption, 0, len(hsOptions))
+
+	for _, optionInterface := range hsOptions {
+		if optionMap, ok := optionInterface.(map[string]any); ok {
+			option := FormFieldOption{
+				Label:        c.getStringFromMap(optionMap, "label"),
+				Value:        c.getStringFromMap(optionMap, "value"),
+				DisplayOrder: c.getIntFromMap(optionMap, "displayOrder"),
+				Selected:     c.getBoolFromMap(optionMap, "selected"),
+			}
+			options = append(options, option)
+		}
+	}
+
+	return options
+}
+
+// convertFormSubmission converts HubSpot form submission
+func (c *Client) convertFormSubmission(hsSubmission map[string]any) FormSubmission {
+	submission := FormSubmission{
+		FormID:   c.getStringFromMap(hsSubmission, "formGuid"),
+		PageUrl:  c.getStringFromMap(hsSubmission, "pageUrl"),
+		PageName: c.getStringFromMap(hsSubmission, "pageName"),
+	}
+
+	if submittedAt := c.getInt64FromMap(hsSubmission, "submittedAt"); submittedAt != nil {
+		submission.SubmittedAt = submittedAt
+	}
+
+	// Convert values
+	if values, ok := hsSubmission["values"].([]any); ok {
+		submission.Values = make([]FormSubmissionValue, 0, len(values))
+		for _, valueInterface := range values {
+			if valueMap, ok := valueInterface.(map[string]any); ok {
+				value := FormSubmissionValue{
+					Name:     c.getStringFromMap(valueMap, "name"),
+					Value:    c.getStringFromMap(valueMap, "value"),
+					Selected: c.getBoolFromMap(valueMap, "selected"),
+				}
+				submission.Values = append(submission.Values, value)
+			}
+		}
+	}
+
+	return submission
+}
+
+// Helper methods for safe map access
+func (c *Client) getStringFromMap(m map[string]any, key string) string {
+	if val, ok := m[key]; ok {
+		if str, ok := val.(string); ok {
+			return str
+		}
+	}
+	return ""
+}
+
+func (c *Client) getBoolFromMap(m map[string]any, key string) bool {
+	if val, ok := m[key]; ok {
+		if b, ok := val.(bool); ok {
+			return b
+		}
+	}
+	return false
+}
+
+func (c *Client) getIntFromMap(m map[string]any, key string) int {
+	if val, ok := m[key]; ok {
+		if i, ok := val.(float64); ok {
+			return int(i)
+		}
+		if i, ok := val.(int); ok {
+			return i
+		}
+	}
+	return 0
+}
+
+func (c *Client) getInt64FromMap(m map[string]any, key string) *int64 {
+	if val, ok := m[key]; ok {
+		if i, ok := val.(float64); ok {
+			result := int64(i)
+			return &result
+		}
+		if i, ok := val.(int64); ok {
+			return &i
+		}
+	}
+	return nil
+}

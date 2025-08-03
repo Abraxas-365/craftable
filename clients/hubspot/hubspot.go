@@ -717,3 +717,123 @@ type PropertyGroupListResponse struct {
 	Results []PropertyGroup `json:"results"`
 	Paging  *Paging         `json:"paging,omitempty"`
 }
+
+// ============================================================================
+// FORM TYPES
+// ============================================================================
+
+// Form represents a HubSpot form
+type Form struct {
+	ID                    string           `json:"id"`
+	Name                  string           `json:"name"`
+	Action                string           `json:"action,omitempty"`
+	Method                string           `json:"method,omitempty"`
+	CssClass              string           `json:"cssClass,omitempty"`
+	Redirect              string           `json:"redirect,omitempty"`
+	SubmitText            string           `json:"submitText,omitempty"`
+	FollowUpAction        string           `json:"followUpActionType,omitempty"`
+	NotifyRecipients      string           `json:"notifyRecipients,omitempty"`
+	LeadNurturingCampaign string           `json:"leadNurturingCampaignId,omitempty"`
+	FormFieldGroups       []FormFieldGroup `json:"formFieldGroups"`
+	CreatedAt             *int64           `json:"createdAt,omitempty"`
+	UpdatedAt             *int64           `json:"updatedAt,omitempty"`
+	Archived              bool             `json:"archived,omitempty"`
+	Published             bool             `json:"published,omitempty"`
+}
+
+// FormFieldGroup represents a group of form fields
+type FormFieldGroup struct {
+	Fields       []FormField    `json:"fields"`
+	Default      bool           `json:"default,omitempty"`
+	IsSmartGroup bool           `json:"isSmartGroup,omitempty"`
+	RichText     map[string]any `json:"richText,omitempty"`
+	GroupType    string         `json:"groupType,omitempty"`
+}
+
+// FormField represents a single form field
+type FormField struct {
+	Name                 string            `json:"name"`
+	Label                string            `json:"label,omitempty"`
+	FieldType            string            `json:"fieldType"`
+	ObjectTypeId         string            `json:"objectTypeId,omitempty"`
+	Description          string            `json:"description,omitempty"`
+	GroupName            string            `json:"groupName,omitempty"`
+	DisplayOrder         int               `json:"displayOrder,omitempty"`
+	Required             bool              `json:"required,omitempty"`
+	Enabled              bool              `json:"enabled,omitempty"`
+	Hidden               bool              `json:"hidden,omitempty"`
+	DefaultValue         string            `json:"defaultValue,omitempty"`
+	Placeholder          string            `json:"placeholder,omitempty"`
+	Options              []FormFieldOption `json:"options,omitempty"`
+	Validation           map[string]any    `json:"validation,omitempty"`
+	DependentFields      []map[string]any  `json:"dependentFields,omitempty"`
+	UseCountryCodeSelect bool              `json:"useCountryCodeSelect,omitempty"`
+	AllowMultipleFiles   bool              `json:"allowMultipleFiles,omitempty"`
+	LabelHidden          bool              `json:"labelHidden,omitempty"`
+	PropertyObjectType   string            `json:"propertyObjectType,omitempty"`
+	MetaData             []map[string]any  `json:"metaData,omitempty"`
+}
+
+// FormFieldOption represents an option for select/radio/checkbox fields
+type FormFieldOption struct {
+	Label        string `json:"label"`
+	Value        string `json:"value"`
+	DisplayOrder int    `json:"displayOrder,omitempty"`
+	Selected     bool   `json:"selected,omitempty"`
+}
+
+// FormCreateRequest represents a request to create a form
+type FormCreateRequest struct {
+	Name                  string           `json:"name"`
+	FormFieldGroups       []FormFieldGroup `json:"formFieldGroups"`
+	SubmitText            string           `json:"submitText,omitempty"`
+	FollowUpAction        string           `json:"followUpActionType,omitempty"`
+	NotifyRecipients      string           `json:"notifyRecipients,omitempty"`
+	LeadNurturingCampaign string           `json:"leadNurturingCampaignId,omitempty"`
+	Configuration         map[string]any   `json:"configuration,omitempty"`
+	DisplayOptions        map[string]any   `json:"displayOptions,omitempty"`
+	Style                 map[string]any   `json:"style,omitempty"`
+}
+
+// FormUpdateRequest represents a request to update a form
+type FormUpdateRequest struct {
+	Name                  *string           `json:"name,omitempty"`
+	FormFieldGroups       *[]FormFieldGroup `json:"formFieldGroups,omitempty"`
+	SubmitText            *string           `json:"submitText,omitempty"`
+	FollowUpAction        *string           `json:"followUpActionType,omitempty"`
+	NotifyRecipients      *string           `json:"notifyRecipients,omitempty"`
+	LeadNurturingCampaign *string           `json:"leadNurturingCampaignId,omitempty"`
+	Archived              *bool             `json:"archived,omitempty"`
+	Configuration         *map[string]any   `json:"configuration,omitempty"`
+	DisplayOptions        *map[string]any   `json:"displayOptions,omitempty"`
+	Style                 *map[string]any   `json:"style,omitempty"`
+}
+
+// FormListResponse represents a list of forms response
+type FormListResponse struct {
+	Results []Form  `json:"results"`
+	Paging  *Paging `json:"paging,omitempty"`
+}
+
+// FormSubmission represents a form submission
+type FormSubmission struct {
+	SubmittedAt *int64                `json:"submittedAt,omitempty"`
+	Values      []FormSubmissionValue `json:"values"`
+	PageUrl     string                `json:"pageUrl,omitempty"`
+	PageName    string                `json:"pageName,omitempty"`
+	ContactID   string                `json:"contactId,omitempty"`
+	FormID      string                `json:"formId"`
+}
+
+// FormSubmissionValue represents a submitted form field value
+type FormSubmissionValue struct {
+	Name     string `json:"name"`
+	Value    string `json:"value"`
+	Selected bool   `json:"selected,omitempty"`
+}
+
+// FormSubmissionListResponse represents form submission list response
+type FormSubmissionListResponse struct {
+	Results []FormSubmission `json:"results"`
+	Paging  *Paging          `json:"paging,omitempty"`
+}

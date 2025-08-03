@@ -630,6 +630,7 @@ type PropertyDefinition struct {
 	CalculationFormula   string                `json:"calculationFormula,omitempty"`
 	ExternalOptions      bool                  `json:"externalOptions,omitempty"`
 	ReferencedObjectType string                `json:"referencedObjectType,omitempty"`
+	DataSensitivity      string                `json:"dataSensitivity,omitempty"` // Add this line
 	CreatedAt            *int64                `json:"createdAt,omitempty"`
 	UpdatedAt            *int64                `json:"updatedAt,omitempty"`
 	CreatedUserId        string                `json:"createdUserId,omitempty"`

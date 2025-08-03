@@ -1912,3 +1912,449 @@ func (c *Client) getInt64FromMap(m map[string]any, key string) *int64 {
 	}
 	return nil
 }
+
+// ============================================================================
+// LIST METHODS
+// ============================================================================
+
+// GetAllLists fetches all lists from HubSpot
+func (c *Client) GetAllLists(ctx context.Context, limit int, offset int) (*ListResponse, error) {
+	logx.Debug("Fetching all lists from HubSpot")
+
+	params := make(map[string]string)
+	if limit > 0 {
+		params["count"] = strconv.Itoa(limit)
+	}
+	if offset > 0 {
+		params["offset"] = strconv.Itoa(offset)
+	}
+
+	var response ListResponse
+	err := c.Get(ctx, "/contacts/v1/lists", params, &response)
+	if err != nil {
+		return nil, err
+	}
+
+	return &response, nil
+}
+
+// GetListByID fetches a single list by ID
+func (c *Client) GetListByID(ctx context.Context, listID int) (*List, error) {
+	logx.Debug("Fetching list by ID: %d", listID)
+
+	var list List
+	endpoint := fmt.Sprintf("/contacts/v1/lists/%d", listID)
+	err := c.Get(ctx, endpoint, nil, &list)
+	if err != nil {
+		if errx.IsCode(err, ErrHubSpotNotFound) {
+			return nil, NewResourceNotFoundError("list", listID)
+		}
+		return nil, err
+	}
+
+	return &list, nil
+}
+
+// GetStaticLists fetches all static lists
+func (c *Client) GetStaticLists(ctx context.Context, limit int, offset int) (*ListResponse, error) {
+	logx.Debug("Fetching static lists from HubSpot")
+
+	params := make(map[string]string)
+	params["listType"] = "STATIC"
+	if limit > 0 {
+		params["count"] = strconv.Itoa(limit)
+	}
+	if offset > 0 {
+		params["offset"] = strconv.Itoa(offset)
+	}
+
+	var response ListResponse
+	err := c.Get(ctx, "/contacts/v1/lists", params, &response)
+	if err != nil {
+		return nil, err
+	}
+
+	return &response, nil
+}
+
+// GetDynamicLists fetches all dynamic lists
+func (c *Client) GetDynamicLists(ctx context.Context, limit int, offset int) (*ListResponse, error) {
+	logx.Debug("Fetching dynamic lists from HubSpot")
+
+	params := make(map[string]string)
+	params["listType"] = "DYNAMIC"
+	if limit > 0 {
+		params["count"] = strconv.Itoa(limit)
+	}
+	if offset > 0 {
+		params["offset"] = strconv.Itoa(offset)
+	}
+
+	var response ListResponse
+	err := c.Get(ctx, "/contacts/v1/lists", params, &response)
+	if err != nil {
+		return nil, err
+	}
+
+	return &response, nil
+}
+
+// CreateList creates a new list
+func (c *Client) CreateList(ctx context.Context, list *ListCreateRequest) (*List, error) {
+	logx.Debug("Creating list: %s", list.Name)
+
+	var result List
+	err := c.Post(ctx, "/contacts/v1/lists", list, &result)
+	if err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+// UpdateList updates an existing list
+func (c *Client) UpdateList(ctx context.Context, listID int, list *ListUpdateRequest) (*List, error) {
+	logx.Debug("Updating list: %d", listID)
+
+	var result List
+	endpoint := fmt.Sprintf("/contacts/v1/lists/%d", listID)
+	err := c.Post(ctx, endpoint, list, &result)
+	if err != nil {
+		if errx.IsCode(err, ErrHubSpotNotFound) {
+			return nil, NewResourceNotFoundError("list", listID)
+		}
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+// DeleteList deletes a list
+func (c *Client) DeleteList(ctx context.Context, listID int) error {
+	logx.Debug("Deleting list: %d", listID)
+
+	endpoint := fmt.Sprintf("/contacts/v1/lists/%d", listID)
+	err := c.Delete(ctx, endpoint)
+	if err != nil {
+		if errx.IsCode(err, ErrHubSpotNotFound) {
+			return NewResourceNotFoundError("list", listID)
+		}
+		return err
+	}
+
+	return nil
+}
+
+// GetListContacts fetches contacts in a list
+func (c *Client) GetListContacts(ctx context.Context, listID int, limit int, vidOffset int, propertiesToReturn []string) (*ListContactsResponse, error) {
+	logx.Debug("Fetching contacts for list: %d", listID)
+
+	params := make(map[string]string)
+	if limit > 0 {
+		params["count"] = strconv.Itoa(limit)
+	}
+	if vidOffset > 0 {
+		params["vidOffset"] = strconv.Itoa(vidOffset)
+	}
+	if len(propertiesToReturn) > 0 {
+		params["property"] = strings.Join(propertiesToReturn, "&property=")
+	}
+
+	var response ListContactsResponse
+	endpoint := fmt.Sprintf("/contacts/v1/lists/%d/contacts/all", listID)
+	err := c.Get(ctx, endpoint, params, &response)
+	if err != nil {
+		if errx.IsCode(err, ErrHubSpotNotFound) {
+			return nil, NewResourceNotFoundError("list", listID)
+		}
+		return nil, err
+	}
+
+	return &response, nil
+}
+
+// GetRecentListContacts fetches recently added contacts in a list
+func (c *Client) GetRecentListContacts(ctx context.Context, listID int, limit int, timeOffset int64, propertiesToReturn []string) (*ListContactsResponse, error) {
+	logx.Debug("Fetching recent contacts for list: %d", listID)
+
+	params := make(map[string]string)
+	if limit > 0 {
+		params["count"] = strconv.Itoa(limit)
+	}
+	if timeOffset > 0 {
+		params["timeOffset"] = strconv.FormatInt(timeOffset, 10)
+	}
+	if len(propertiesToReturn) > 0 {
+		params["property"] = strings.Join(propertiesToReturn, "&property=")
+	}
+
+	var response ListContactsResponse
+	endpoint := fmt.Sprintf("/contacts/v1/lists/%d/contacts/recent", listID)
+	err := c.Get(ctx, endpoint, params, &response)
+	if err != nil {
+		if errx.IsCode(err, ErrHubSpotNotFound) {
+			return nil, NewResourceNotFoundError("list", listID)
+		}
+		return nil, err
+	}
+
+	return &response, nil
+}
+
+// AddContactsToList adds contacts to a static list by contact IDs
+func (c *Client) AddContactsToList(ctx context.Context, listID int, contactIDs []int) (*ListMembershipResponse, error) {
+	logx.Debug("Adding %d contacts to list: %d", len(contactIDs), listID)
+
+	request := &ListMembershipRequest{
+		VIDs: contactIDs,
+	}
+
+	var response ListMembershipResponse
+	endpoint := fmt.Sprintf("/contacts/v1/lists/%d/add", listID)
+	err := c.Post(ctx, endpoint, request, &response)
+	if err != nil {
+		if errx.IsCode(err, ErrHubSpotNotFound) {
+			return nil, NewResourceNotFoundError("list", listID)
+		}
+		return nil, err
+	}
+
+	return &response, nil
+}
+
+// AddContactsToListByEmail adds contacts to a static list by email addresses
+func (c *Client) AddContactsToListByEmail(ctx context.Context, listID int, emails []string) (*ListMembershipResponse, error) {
+	logx.Debug("Adding %d contacts to list by email: %d", len(emails), listID)
+
+	request := &ListMembershipRequest{
+		Emails: emails,
+	}
+
+	var response ListMembershipResponse
+	endpoint := fmt.Sprintf("/contacts/v1/lists/%d/add", listID)
+	err := c.Post(ctx, endpoint, request, &response)
+	if err != nil {
+		if errx.IsCode(err, ErrHubSpotNotFound) {
+			return nil, NewResourceNotFoundError("list", listID)
+		}
+		return nil, err
+	}
+
+	return &response, nil
+}
+
+// RemoveContactsFromList removes contacts from a static list by contact IDs
+func (c *Client) RemoveContactsFromList(ctx context.Context, listID int, contactIDs []int) (*ListMembershipResponse, error) {
+	logx.Debug("Removing %d contacts from list: %d", len(contactIDs), listID)
+
+	request := &ListMembershipRequest{
+		VIDs: contactIDs,
+	}
+
+	var response ListMembershipResponse
+	endpoint := fmt.Sprintf("/contacts/v1/lists/%d/remove", listID)
+	err := c.Post(ctx, endpoint, request, &response)
+	if err != nil {
+		if errx.IsCode(err, ErrHubSpotNotFound) {
+			return nil, NewResourceNotFoundError("list", listID)
+		}
+		return nil, err
+	}
+
+	return &response, nil
+}
+
+// RemoveContactsFromListByEmail removes contacts from a static list by email addresses
+func (c *Client) RemoveContactsFromListByEmail(ctx context.Context, listID int, emails []string) (*ListMembershipResponse, error) {
+	logx.Debug("Removing %d contacts from list by email: %d", len(emails), listID)
+
+	request := &ListMembershipRequest{
+		Emails: emails,
+	}
+
+	var response ListMembershipResponse
+	endpoint := fmt.Sprintf("/contacts/v1/lists/%d/remove", listID)
+	err := c.Post(ctx, endpoint, request, &response)
+	if err != nil {
+		if errx.IsCode(err, ErrHubSpotNotFound) {
+			return nil, NewResourceNotFoundError("list", listID)
+		}
+		return nil, err
+	}
+
+	return &response, nil
+}
+
+// RefreshList refreshes a dynamic list (triggers re-evaluation)
+func (c *Client) RefreshList(ctx context.Context, listID int) error {
+	logx.Debug("Refreshing list: %d", listID)
+
+	endpoint := fmt.Sprintf("/contacts/v1/lists/%d/refresh", listID)
+	err := c.Post(ctx, endpoint, nil, nil)
+	if err != nil {
+		if errx.IsCode(err, ErrHubSpotNotFound) {
+			return NewResourceNotFoundError("list", listID)
+		}
+		return err
+	}
+
+	return nil
+}
+
+// GetListMemberships gets all list memberships for a contact
+func (c *Client) GetListMemberships(ctx context.Context, contactID int) (*ContactListMembershipsResponse, error) {
+	logx.Debug("Fetching list memberships for contact: %d", contactID)
+
+	var response ContactListMembershipsResponse
+	endpoint := fmt.Sprintf("/contacts/v1/contact/vid/%d/lists", contactID)
+	err := c.Get(ctx, endpoint, nil, &response)
+	if err != nil {
+		if errx.IsCode(err, ErrHubSpotNotFound) {
+			return nil, NewResourceNotFoundError("contact", contactID)
+		}
+		return nil, err
+	}
+
+	return &response, nil
+}
+
+// GetListMembershipsByEmail gets all list memberships for a contact by email
+func (c *Client) GetListMembershipsByEmail(ctx context.Context, email string) (*ContactListMembershipsResponse, error) {
+	logx.Debug("Fetching list memberships for contact email: %s", email)
+
+	var response ContactListMembershipsResponse
+	endpoint := fmt.Sprintf("/contacts/v1/contact/email/%s/lists", url.QueryEscape(email))
+	err := c.Get(ctx, endpoint, nil, &response)
+	if err != nil {
+		if errx.IsCode(err, ErrHubSpotNotFound) {
+			return nil, NewResourceNotFoundError("contact", email)
+		}
+		return nil, err
+	}
+
+	return &response, nil
+}
+
+// SearchLists searches for lists by name
+func (c *Client) SearchLists(ctx context.Context, query string, limit int, offset int) (*ListResponse, error) {
+	logx.Debug("Searching lists with query: %s", query)
+
+	// HubSpot doesn't have native search for lists, so we get all and filter
+	response, err := c.GetAllLists(ctx, 0, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	var filtered []List
+	queryLower := strings.ToLower(query)
+
+	for _, list := range response.Lists {
+		if strings.Contains(strings.ToLower(list.Name), queryLower) {
+			filtered = append(filtered, list)
+		}
+	}
+
+	// Apply limit and offset
+	if offset > len(filtered) {
+		filtered = []List{}
+	} else {
+		filtered = filtered[offset:]
+		if limit > 0 && limit < len(filtered) {
+			filtered = filtered[:limit]
+		}
+	}
+
+	return &ListResponse{
+		Lists:      filtered,
+		HasMore:    len(filtered) == limit,
+		TotalCount: len(filtered),
+	}, nil
+}
+
+// GetListsByType gets lists filtered by type
+func (c *Client) GetListsByType(ctx context.Context, listType string, limit int, offset int) (*ListResponse, error) {
+	logx.Debug("Fetching lists by type: %s", listType)
+
+	params := make(map[string]string)
+	params["listType"] = listType
+	if limit > 0 {
+		params["count"] = strconv.Itoa(limit)
+	}
+	if offset > 0 {
+		params["offset"] = strconv.Itoa(offset)
+	}
+
+	var response ListResponse
+	err := c.Get(ctx, "/contacts/v1/lists", params, &response)
+	if err != nil {
+		return nil, err
+	}
+
+	return &response, nil
+}
+
+// CloneList creates a copy of an existing list
+func (c *Client) CloneList(ctx context.Context, listID int, newListName string) (*List, error) {
+	logx.Debug("Cloning list %d with new name: %s", listID, newListName)
+
+	// Get the original list
+	originalList, err := c.GetListByID(ctx, listID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create clone request based on original list
+	cloneRequest := &ListCreateRequest{
+		Name:     newListName,
+		ListType: originalList.ListType,
+		Filters:  originalList.Filters,
+	}
+
+	// Create the new list
+	return c.CreateList(ctx, cloneRequest)
+}
+
+// GetListSize gets the count of contacts in a list
+func (c *Client) GetListSize(ctx context.Context, listID int) (*ListSizeResponse, error) {
+	logx.Debug("Getting size for list: %d", listID)
+
+	var response ListSizeResponse
+	endpoint := fmt.Sprintf("/contacts/v1/lists/%d/size", listID)
+	err := c.Get(ctx, endpoint, nil, &response)
+	if err != nil {
+		if errx.IsCode(err, ErrHubSpotNotFound) {
+			return nil, NewResourceNotFoundError("list", listID)
+		}
+		return nil, err
+	}
+
+	return &response, nil
+}
+
+// BatchAddContactsToLists adds contacts to multiple lists
+func (c *Client) BatchAddContactsToLists(ctx context.Context, contactIDs []int, listIDs []int) error {
+	logx.Debug("Batch adding %d contacts to %d lists", len(contactIDs), len(listIDs))
+
+	for _, listID := range listIDs {
+		_, err := c.AddContactsToList(ctx, listID, contactIDs)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// BatchRemoveContactsFromLists removes contacts from multiple lists
+func (c *Client) BatchRemoveContactsFromLists(ctx context.Context, contactIDs []int, listIDs []int) error {
+	logx.Debug("Batch removing %d contacts from %d lists", len(contactIDs), len(listIDs))
+
+	for _, listID := range listIDs {
+		_, err := c.RemoveContactsFromList(ctx, listID, contactIDs)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}

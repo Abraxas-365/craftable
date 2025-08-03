@@ -837,3 +837,74 @@ type FormSubmissionListResponse struct {
 	Results []FormSubmission `json:"results"`
 	Paging  *Paging          `json:"paging,omitempty"`
 }
+
+// ============================================================================
+// ADDITIONAL LIST TYPES
+// ============================================================================
+
+// ListResponse represents a response containing multiple lists
+type ListResponse struct {
+	Lists      []List `json:"lists"`
+	HasMore    bool   `json:"has-more"`
+	Offset     int    `json:"offset,omitempty"`
+	TotalCount int    `json:"total,omitempty"`
+}
+
+// ListCreateRequest represents a request to create a list
+type ListCreateRequest struct {
+	Name     string       `json:"name"`
+	ListType string       `json:"listType"` // "STATIC" or "DYNAMIC"
+	Filters  []ListFilter `json:"filters,omitempty"`
+}
+
+// ListUpdateRequest represents a request to update a list
+type ListUpdateRequest struct {
+	Name    *string       `json:"name,omitempty"`
+	Filters *[]ListFilter `json:"filters,omitempty"`
+}
+
+// ListContactsResponse represents contacts in a list
+type ListContactsResponse struct {
+	Contacts  []ListContact `json:"contacts"`
+	HasMore   bool          `json:"has-more"`
+	VidOffset int           `json:"vid-offset,omitempty"`
+}
+
+// ListContact represents a contact in a list context
+type ListContact struct {
+	VID        int            `json:"vid"`
+	Properties map[string]any `json:"properties"`
+	AddedAt    *int64         `json:"addedAt,omitempty"`
+}
+
+// ListMembershipRequest represents a request to add/remove contacts from a list
+type ListMembershipRequest struct {
+	VIDs   []int    `json:"vids,omitempty"`
+	Emails []string `json:"emails,omitempty"`
+}
+
+// ListMembershipResponse represents the response from list membership operations
+type ListMembershipResponse struct {
+	Updated []int `json:"updated"`
+	Deleted []int `json:"discarded,omitempty"`
+	Invalid []int `json:"invalidVids,omitempty"`
+}
+
+// ContactListMembershipsResponse represents list memberships for a contact
+type ContactListMembershipsResponse struct {
+	Lists []ContactListMembership `json:"lists"`
+}
+
+// ContactListMembership represents a single list membership
+type ContactListMembership struct {
+	ListID       int    `json:"listId"`
+	InternalName string `json:"internalName"`
+	Name         string `json:"name"`
+	IsMember     bool   `json:"is-member"`
+}
+
+// ListSizeResponse represents the size of a list
+type ListSizeResponse struct {
+	ListID int `json:"listId"`
+	Size   int `json:"size"`
+}

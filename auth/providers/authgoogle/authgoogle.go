@@ -199,7 +199,7 @@ func (p *GoogleProvider) GetUserInfo(ctx context.Context, token *auth.OAuthToken
 	}
 
 	// Parse user data
-	var rawData map[string]interface{}
+	var rawData map[string]any
 	if err := json.Unmarshal(body, &rawData); err != nil {
 		return nil, providerErrors.New(ErrResponseParsing).
 			WithDetail("error", "failed to parse user info").

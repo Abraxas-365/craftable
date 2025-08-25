@@ -526,67 +526,84 @@ func (w *WhatsAppProvider) convertToWhatsAppMessage(
 			Language: whatsappLanguage{Code: msg.Content.Template.Language},
 		}
 
-		// Convert parameters for WhatsApp (FIXED VERSION)
 		if len(msg.Content.Template.Parameters) > 0 {
-			components := []whatsappTemplateComponent{
-				{
-					Type: "body",
-				},
-			}
-
-			// Check if we have numeric keys (indicating ordered parameters)
-			hasOrderedKeys := false
-			for key := range msg.Content.Template.Parameters {
-				if _, err := strconv.Atoi(key); err == nil {
-					hasOrderedKeys = true
-					break
-				}
-			}
-
-			if hasOrderedKeys {
-				// Handle ordered parameters (keys are "1", "2", "3", etc.)
-				type orderedParam struct {
-					order int
-					value any
-				}
-
-				var orderedParams []orderedParam
-
-				for key, value := range msg.Content.Template.Parameters {
-					if order, err := strconv.Atoi(key); err == nil {
-						orderedParams = append(orderedParams, orderedParam{order, value})
-					}
-				}
-
-				// Sort by order
-				sort.Slice(orderedParams, func(i, j int) bool {
-					return orderedParams[i].order < orderedParams[j].order
-				})
-
-				// Add in correct order
-				for _, param := range orderedParams {
-					components[0].Parameters = append(components[0].Parameters, whatsappTemplateParameter{
-						Type: "text",
-						Text: fmt.Sprintf("%v", param.value),
-					})
-				}
+			// Fetch template from WhatsApp API to understand its structure
+			template, err := w.GetTemplate(ctx, msg.Content.Template.Name, msg.Content.Template.Language)
+			if err != nil {
+				// Fallback to old logic if API fetch fails
+				logx.Warn("Failed to fetch template structure, using fallback logic: %v", err)
+				whatsappMsg.Template.Components = w.buildComponentsWithoutAPI(msg.Content.Template.Parameters)
 			} else {
-				// Handle named parameters - add them as-is (order doesn't matter for named)
-				for _, value := range msg.Content.Template.Parameters {
-					components[0].Parameters = append(components[0].Parameters, whatsappTemplateParameter{
-						Type: "text",
-						Text: fmt.Sprintf("%v", value),
-					})
+				// Use the proper API-based component builder
+				components, err := w.buildComponentsFromAPITemplate(template, msg.Content.Template.Parameters)
+				if err != nil {
+					return nil, fmt.Errorf("failed to build template components: %w", err)
 				}
+				whatsappMsg.Template.Components = components
 			}
-
-			whatsappMsg.Template.Components = components
 		}
 	default:
 		return nil, fmt.Errorf("unsupported message type: %s", msg.Type)
 	}
 
 	return whatsappMsg, nil
+}
+
+func (w *WhatsAppProvider) buildComponentsWithoutAPI(parameters map[string]any) []whatsappTemplateComponent {
+	components := []whatsappTemplateComponent{
+		{
+			Type: "body",
+		},
+	}
+
+	// Check if we have numeric keys (indicating ordered parameters)
+	hasOrderedKeys := false
+	for key := range parameters {
+		if _, err := strconv.Atoi(key); err == nil {
+			hasOrderedKeys = true
+			break
+		}
+	}
+
+	if hasOrderedKeys {
+		// Handle ordered parameters (keys are "1", "2", "3", etc.)
+		type orderedParam struct {
+			order int
+			value any
+		}
+
+		var orderedParams []orderedParam
+		for key, value := range parameters {
+			if order, err := strconv.Atoi(key); err == nil {
+				orderedParams = append(orderedParams, orderedParam{order, value})
+			}
+		}
+
+		// Sort by order
+		sort.Slice(orderedParams, func(i, j int) bool {
+			return orderedParams[i].order < orderedParams[j].order
+		})
+
+		// Add in correct order
+		for _, param := range orderedParams {
+			components[0].Parameters = append(components[0].Parameters, whatsappTemplateParameter{
+				Type: "text",
+				Text: fmt.Sprintf("%v", param.value),
+			})
+		}
+	} else {
+		// WARNING: This fallback for named parameters is unreliable
+		// since we don't know the template structure
+		logx.Warn("Using unreliable fallback for named template parameters")
+		for _, value := range parameters {
+			components[0].Parameters = append(components[0].Parameters, whatsappTemplateParameter{
+				Type: "text",
+				Text: fmt.Sprintf("%v", value),
+			})
+		}
+	}
+
+	return components
 }
 
 // SendBulk sends multiple messages

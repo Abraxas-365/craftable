@@ -187,7 +187,6 @@ func (w *WhatsAppProvider) GetTemplate(ctx context.Context, templateName, langua
 
 // buildComponentsFromAPITemplate is the universal builder that constructs components
 // based on the official template structure from the API.
-// Fixed buildComponentsFromAPITemplate method
 func (w *WhatsAppProvider) buildComponentsFromAPITemplate(
 	template *TemplateFromAPI,
 	parameters map[string]any,
@@ -202,37 +201,57 @@ func (w *WhatsAppProvider) buildComponentsFromAPITemplate(
 
 		switch componentType {
 		case "header", "body":
-			matches := re.FindAllStringSubmatch(apiComponent.Text, -1)
-			if len(matches) == 0 {
-				continue // No parameters in this component
-			}
-
 			var componentParams []whatsappTemplateParameter
 
 			if template.ParameterFormat == "NAMED" {
-				// For named templates: extract parameter names in order and map to values
-				for _, match := range matches {
-					variableName := match[1] // Extract name from {{name}}
-					if val, ok := parameters[variableName]; ok {
-						// IMPORTANT: Do NOT include Name field - WhatsApp API doesn't support it
-						componentParams = append(componentParams, whatsappTemplateParameter{
-							Type: "text",
-							Text: fmt.Sprintf("%v", val),
-							// Name: variableName,  // <- REMOVE THIS LINE
-						})
-						logx.Debug("Named parameter mapped: {{%s}} = %v", variableName, val)
-					} else {
-						logx.Warn("Named parameter {{%s}} not found in provided parameters", variableName)
+				// CRITICAL FIX: For named templates, use the parameter order from body_text_named_params
+				if apiComponent.Example != nil && len(apiComponent.Example.BodyTextNamedParams) > 0 {
+					logx.Debug("Using body_text_named_params order for NAMED template")
+					for _, namedParam := range apiComponent.Example.BodyTextNamedParams {
+						paramName := namedParam.ParamName
+						if val, ok := parameters[paramName]; ok {
+							componentParams = append(componentParams, whatsappTemplateParameter{
+								Type: "text",
+								Text: fmt.Sprintf("%v", val),
+							})
+							logx.Debug("NAMED template parameter: %s = %v (position %d)", paramName, val, len(componentParams))
+						} else {
+							logx.Warn("NAMED template parameter %s not found in provided parameters", paramName)
+							// Add empty parameter to maintain position
+							componentParams = append(componentParams, whatsappTemplateParameter{
+								Type: "text",
+								Text: "",
+							})
+						}
+					}
+				} else {
+					// Fallback: extract from regex if no body_text_named_params
+					logx.Warn("No body_text_named_params found, using regex fallback for NAMED template")
+					matches := re.FindAllStringSubmatch(apiComponent.Text, -1)
+					for _, match := range matches {
+						variableName := match[1]
+						if val, ok := parameters[variableName]; ok {
+							componentParams = append(componentParams, whatsappTemplateParameter{
+								Type: "text",
+								Text: fmt.Sprintf("%v", val),
+							})
+						}
 					}
 				}
 			} else {
-				// For positional templates: use parameter order
+				// For positional templates: use existing logic
+				matches := re.FindAllStringSubmatch(apiComponent.Text, -1)
+				if len(matches) == 0 {
+					continue
+				}
+
+				// Sort parameters by key for consistent order
 				var positionalParams []string
 				keys := make([]string, 0, len(parameters))
 				for k := range parameters {
 					keys = append(keys, k)
 				}
-				sort.Strings(keys) // Sort keys for consistent order
+				sort.Strings(keys)
 				for _, k := range keys {
 					positionalParams = append(positionalParams, fmt.Sprintf("%v", parameters[k]))
 				}
@@ -266,7 +285,7 @@ func (w *WhatsAppProvider) buildComponentsFromAPITemplate(
 					continue
 				}
 
-				variableName := matches[0][1] // {{1}} -> "1", {{token}} -> "token"
+				variableName := matches[0][1]
 				var paramValue string
 
 				if val, ok := parameters[variableName]; ok {
@@ -280,7 +299,6 @@ func (w *WhatsAppProvider) buildComponentsFromAPITemplate(
 						Index:   strconv.Itoa(btnIndex),
 						Parameters: []whatsappTemplateParameter{
 							{Type: "text", Text: paramValue},
-							// No Name field here either
 						},
 					})
 				}

@@ -187,25 +187,14 @@ func (w *WhatsAppProvider) GetTemplate(ctx context.Context, templateName, langua
 
 // buildComponentsFromAPITemplate is the universal builder that constructs components
 // based on the official template structure from the API.
+// Fixed buildComponentsFromAPITemplate method
 func (w *WhatsAppProvider) buildComponentsFromAPITemplate(
 	template *TemplateFromAPI,
 	parameters map[string]any,
 ) ([]whatsappTemplateComponent, error) {
 	var components []whatsappTemplateComponent
-	// A map to hold parameters for positional templates, sorted by key
-	var positionalParams []string
-	if template.ParameterFormat != "NAMED" {
-		keys := make([]string, 0, len(parameters))
-		for k := range parameters {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys) // Sort keys alphabetically for consistent order
-		for _, k := range keys {
-			positionalParams = append(positionalParams, fmt.Sprintf("%v", parameters[k]))
-		}
-	}
 
-	// Regex to find any placeholder like {{name}} or {{1}}
+	// Regex to find placeholders like {{name}} or {{1}}
 	re := regexp.MustCompile(`\{\{([^{}]+)\}\}`)
 
 	for _, apiComponent := range template.Components {
@@ -219,27 +208,42 @@ func (w *WhatsAppProvider) buildComponentsFromAPITemplate(
 			}
 
 			var componentParams []whatsappTemplateParameter
-			for i, match := range matches {
-				variableName := match[1]
-				var paramValue string
 
-				if template.ParameterFormat == "NAMED" {
+			if template.ParameterFormat == "NAMED" {
+				// For named templates: extract parameter names in order and map to values
+				for _, match := range matches {
+					variableName := match[1] // Extract name from {{name}}
 					if val, ok := parameters[variableName]; ok {
-						paramValue = fmt.Sprintf("%v", val)
-					}
-				} else {
-					// For positional, use the ordered slice
-					if i < len(positionalParams) {
-						paramValue = positionalParams[i]
+						// IMPORTANT: Do NOT include Name field - WhatsApp API doesn't support it
+						componentParams = append(componentParams, whatsappTemplateParameter{
+							Type: "text",
+							Text: fmt.Sprintf("%v", val),
+							// Name: variableName,  // <- REMOVE THIS LINE
+						})
+						logx.Debug("Named parameter mapped: {{%s}} = %v", variableName, val)
+					} else {
+						logx.Warn("Named parameter {{%s}} not found in provided parameters", variableName)
 					}
 				}
+			} else {
+				// For positional templates: use parameter order
+				var positionalParams []string
+				keys := make([]string, 0, len(parameters))
+				for k := range parameters {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys) // Sort keys for consistent order
+				for _, k := range keys {
+					positionalParams = append(positionalParams, fmt.Sprintf("%v", parameters[k]))
+				}
 
-				if paramValue != "" {
-					p := whatsappTemplateParameter{Type: "text", Text: paramValue}
-					if template.ParameterFormat == "NAMED" {
-						p.Name = variableName
+				for i, _ := range matches {
+					if i < len(positionalParams) {
+						componentParams = append(componentParams, whatsappTemplateParameter{
+							Type: "text",
+							Text: positionalParams[i],
+						})
 					}
-					componentParams = append(componentParams, p)
 				}
 			}
 
@@ -251,8 +255,8 @@ func (w *WhatsAppProvider) buildComponentsFromAPITemplate(
 			}
 
 		case "buttons":
+			// Handle button parameters (for URL buttons with dynamic parts)
 			for btnIndex, button := range apiComponent.Buttons {
-				// We only care about dynamic URL buttons
 				if button.Type != "URL" {
 					continue
 				}
@@ -262,7 +266,6 @@ func (w *WhatsAppProvider) buildComponentsFromAPITemplate(
 					continue
 				}
 
-				// The dynamic part of the URL is passed in a single text parameter
 				variableName := matches[0][1] // {{1}} -> "1", {{token}} -> "token"
 				var paramValue string
 
@@ -277,6 +280,7 @@ func (w *WhatsAppProvider) buildComponentsFromAPITemplate(
 						Index:   strconv.Itoa(btnIndex),
 						Parameters: []whatsappTemplateParameter{
 							{Type: "text", Text: paramValue},
+							// No Name field here either
 						},
 					})
 				}

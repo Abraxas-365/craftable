@@ -204,7 +204,7 @@ func (w *WhatsAppProvider) buildComponentsFromAPITemplate(
 			var componentParams []whatsappTemplateParameter
 
 			if template.ParameterFormat == "NAMED" {
-				// CRITICAL FIX: For named templates, use the parameter order from body_text_named_params
+				// For NAMED templates: use body_text_named_params order and include parameter_name
 				if apiComponent.Example != nil && len(apiComponent.Example.BodyTextNamedParams) > 0 {
 					logx.Debug("Using body_text_named_params order for NAMED template")
 					for _, namedParam := range apiComponent.Example.BodyTextNamedParams {
@@ -213,14 +213,16 @@ func (w *WhatsAppProvider) buildComponentsFromAPITemplate(
 							componentParams = append(componentParams, whatsappTemplateParameter{
 								Type: "text",
 								Text: fmt.Sprintf("%v", val),
+								Name: paramName, // CRITICAL: Include parameter_name for NAMED templates
 							})
-							logx.Debug("NAMED template parameter: %s = %v (position %d)", paramName, val, len(componentParams))
+							logx.Debug("NAMED template parameter: %s = %v", paramName, val)
 						} else {
 							logx.Warn("NAMED template parameter %s not found in provided parameters", paramName)
 							// Add empty parameter to maintain position
 							componentParams = append(componentParams, whatsappTemplateParameter{
 								Type: "text",
 								Text: "",
+								Name: paramName, // Still include the name even if empty
 							})
 						}
 					}
@@ -234,12 +236,13 @@ func (w *WhatsAppProvider) buildComponentsFromAPITemplate(
 							componentParams = append(componentParams, whatsappTemplateParameter{
 								Type: "text",
 								Text: fmt.Sprintf("%v", val),
+								Name: variableName, // Include parameter name
 							})
 						}
 					}
 				}
 			} else {
-				// For positional templates: use existing logic
+				// For POSITIONAL templates: DON'T include parameter_name
 				matches := re.FindAllStringSubmatch(apiComponent.Text, -1)
 				if len(matches) == 0 {
 					continue
@@ -261,6 +264,7 @@ func (w *WhatsAppProvider) buildComponentsFromAPITemplate(
 						componentParams = append(componentParams, whatsappTemplateParameter{
 							Type: "text",
 							Text: positionalParams[i],
+							// NO Name field for positional templates
 						})
 					}
 				}
@@ -293,13 +297,21 @@ func (w *WhatsAppProvider) buildComponentsFromAPITemplate(
 				}
 
 				if paramValue != "" {
+					param := whatsappTemplateParameter{
+						Type: "text",
+						Text: paramValue,
+					}
+
+					// For NAMED templates, include parameter name in button params too
+					if template.ParameterFormat == "NAMED" {
+						param.Name = variableName
+					}
+
 					components = append(components, whatsappTemplateComponent{
-						Type:    "button",
-						SubType: "url",
-						Index:   strconv.Itoa(btnIndex),
-						Parameters: []whatsappTemplateParameter{
-							{Type: "text", Text: paramValue},
-						},
+						Type:       "button",
+						SubType:    "url",
+						Index:      strconv.Itoa(btnIndex),
+						Parameters: []whatsappTemplateParameter{param},
 					})
 				}
 			}
@@ -1281,7 +1293,7 @@ type whatsappTemplateComponent struct {
 type whatsappTemplateParameter struct {
 	Type string `json:"type"` // "text", "currency", "date_time", "image", etc.
 	Text string `json:"text,omitempty"`
-	Name string `json:"name,omitempty"` // For NAMED templates
+	Name string `json:"parameter_name,omitempty"` // For NAMED templates - field name is "parameter_name" not "name"
 }
 
 // Response structures

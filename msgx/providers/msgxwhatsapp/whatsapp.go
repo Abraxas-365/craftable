@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"regexp"
 	"sort"
@@ -259,7 +260,7 @@ func (w *WhatsAppProvider) buildComponentsFromAPITemplate(
 					positionalParams = append(positionalParams, fmt.Sprintf("%v", parameters[k]))
 				}
 
-				for i, _ := range matches {
+				for i := range matches {
 					if i < len(positionalParams) {
 						componentParams = append(componentParams, whatsappTemplateParameter{
 							Type: "text",
@@ -515,9 +516,16 @@ func (w *WhatsAppProvider) convertToWhatsAppMessage(
 			return nil, fmt.Errorf("media content is required for image messages")
 		}
 		whatsappMsg.Type = "image"
-		whatsappMsg.Image = &whatsappMediaMessage{
-			Link:    msg.Content.Media.URL,
-			Caption: msg.Content.Media.Caption,
+		if id, ok := w.parseMediaIDURL(msg.Content.Media.URL); ok {
+			whatsappMsg.Image = &whatsappMediaMessage{
+				ID:      id,
+				Caption: msg.Content.Media.Caption,
+			}
+		} else {
+			whatsappMsg.Image = &whatsappMediaMessage{
+				Link:    msg.Content.Media.URL,
+				Caption: msg.Content.Media.Caption,
+			}
 		}
 
 	case msgx.MessageTypeDocument:
@@ -525,10 +533,18 @@ func (w *WhatsAppProvider) convertToWhatsAppMessage(
 			return nil, fmt.Errorf("media content is required for document messages")
 		}
 		whatsappMsg.Type = "document"
-		whatsappMsg.Document = &whatsappDocumentMessage{
-			Link:     msg.Content.Media.URL,
-			Caption:  msg.Content.Media.Caption,
-			Filename: msg.Content.Media.Filename,
+		if id, ok := w.parseMediaIDURL(msg.Content.Media.URL); ok {
+			whatsappMsg.Document = &whatsappDocumentMessage{
+				ID:       id,
+				Caption:  msg.Content.Media.Caption,
+				Filename: msg.Content.Media.Filename,
+			}
+		} else {
+			whatsappMsg.Document = &whatsappDocumentMessage{
+				Link:     msg.Content.Media.URL,
+				Caption:  msg.Content.Media.Caption,
+				Filename: msg.Content.Media.Filename,
+			}
 		}
 
 	case msgx.MessageTypeAudio:
@@ -536,8 +552,16 @@ func (w *WhatsAppProvider) convertToWhatsAppMessage(
 			return nil, fmt.Errorf("media content is required for audio messages")
 		}
 		whatsappMsg.Type = "audio"
-		whatsappMsg.Audio = &whatsappMediaMessage{
-			Link: msg.Content.Media.URL,
+		if id, ok := w.parseMediaIDURL(msg.Content.Media.URL); ok {
+			// Send by ID (preferred for Graph uploads)
+			whatsappMsg.Audio = &whatsappMediaMessage{
+				ID: id,
+			}
+		} else {
+			// Fallback: send by link
+			whatsappMsg.Audio = &whatsappMediaMessage{
+				Link: msg.Content.Media.URL,
+			}
 		}
 
 	case msgx.MessageTypeVideo:
@@ -545,9 +569,16 @@ func (w *WhatsAppProvider) convertToWhatsAppMessage(
 			return nil, fmt.Errorf("media content is required for video messages")
 		}
 		whatsappMsg.Type = "video"
-		whatsappMsg.Video = &whatsappMediaMessage{
-			Link:    msg.Content.Media.URL,
-			Caption: msg.Content.Media.Caption,
+		if id, ok := w.parseMediaIDURL(msg.Content.Media.URL); ok {
+			whatsappMsg.Video = &whatsappMediaMessage{
+				ID:      id,
+				Caption: msg.Content.Media.Caption,
+			}
+		} else {
+			whatsappMsg.Video = &whatsappMediaMessage{
+				Link:    msg.Content.Media.URL,
+				Caption: msg.Content.Media.Caption,
+			}
 		}
 
 	case msgx.MessageTypeTemplate:
@@ -1265,12 +1296,19 @@ type whatsappTextMessage struct {
 type whatsappMediaMessage struct {
 	Link    string `json:"link,omitempty"`
 	Caption string `json:"caption,omitempty"`
+	ID      string `json:"id,omitempty"` // NEW: support sending media by id
 }
 
 type whatsappDocumentMessage struct {
 	Link     string `json:"link,omitempty"`
 	Caption  string `json:"caption,omitempty"`
 	Filename string `json:"filename,omitempty"`
+	ID       string `json:"id,omitempty"` // NEW: support sending document by id
+}
+
+// upload response
+type whatsappMediaUploadResponse struct {
+	ID string `json:"id"`
 }
 
 type whatsappTemplateMessage struct {
@@ -1507,4 +1545,76 @@ type whatsappTypingResponse struct {
 	MessagingProduct string                    `json:"messaging_product"`
 	Contacts         []whatsappContact         `json:"contacts"`
 	Messages         []whatsappMessageResponse `json:"messages"`
+}
+
+// UploadMedia uploads binary data to WhatsApp Graph and returns the media object ID.
+// Docs: POST https://graph.facebook.com/{version}/{phone-number-id}/media
+// form-data: messaging_product=whatsapp, file=@..., type=<mime>
+func (w *WhatsAppProvider) UploadMedia(ctx context.Context, filename string, mimeType string, data []byte) (string, error) {
+	url := fmt.Sprintf("%s/media", w.baseURL)
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	// messaging_product
+	if err := writer.WriteField("messaging_product", "whatsapp"); err != nil {
+		return "", fmt.Errorf("failed to set messaging_product: %w", err)
+	}
+
+	// type (mime type)
+	if strings.TrimSpace(mimeType) != "" {
+		if err := writer.WriteField("type", mimeType); err != nil {
+			return "", fmt.Errorf("failed to set mime type: %w", err)
+		}
+	}
+
+	// file (binary)
+	fw, err := writer.CreateFormFile("file", filename)
+	if err != nil {
+		return "", fmt.Errorf("failed to create form file: %w", err)
+	}
+	if _, err := io.Copy(fw, bytes.NewReader(data)); err != nil {
+		return "", fmt.Errorf("failed to write file data: %w", err)
+	}
+
+	_ = writer.Close()
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, &body)
+	if err != nil {
+		return "", fmt.Errorf("failed to create upload request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+w.config.AccessToken)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := w.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("upload request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", w.handleAPIError(resp)
+	}
+
+	var upResp whatsappMediaUploadResponse
+	if err := json.NewDecoder(resp.Body).Decode(&upResp); err != nil {
+		return "", fmt.Errorf("failed to decode upload response: %w", err)
+	}
+	if strings.TrimSpace(upResp.ID) == "" {
+		return "", fmt.Errorf("empty media id in upload response")
+	}
+
+	logx.Debug("WhatsApp media uploaded successfully; id=%s, filename=%s, mimeType=%s", upResp.ID, filename, mimeType)
+	return upResp.ID, nil
+}
+
+func (w *WhatsAppProvider) parseMediaIDURL(url string) (string, bool) {
+	const prefix = "media_id:"
+	if id, ok := strings.CutPrefix(url, prefix); ok {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			return id, true
+		}
+	}
+	return "", false
 }

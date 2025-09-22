@@ -13,10 +13,12 @@ import (
 
 // Agent represents an LLM-powered agent with memory and tool capabilities
 type Agent struct {
-	client  *llm.Client
-	tools   *toolx.ToolxClient
-	memory  memoryx.Memory
-	options []llm.Option
+	client             *llm.Client
+	tools              *toolx.ToolxClient
+	memory             memoryx.Memory
+	options            []llm.Option
+	maxAutoIterations  int // Max iterations with "auto" tool choice
+	maxTotalIterations int // Hard limit to prevent infinite loops
 }
 
 // AgentOption configures an Agent
@@ -36,11 +38,27 @@ func WithTools(tools *toolx.ToolxClient) AgentOption {
 	}
 }
 
+// WithMaxAutoIterations sets the maximum number of "auto" tool choice iterations
+func WithMaxAutoIterations(max int) AgentOption {
+	return func(a *Agent) {
+		a.maxAutoIterations = max
+	}
+}
+
+// WithMaxTotalIterations sets the hard limit for total iterations
+func WithMaxTotalIterations(max int) AgentOption {
+	return func(a *Agent) {
+		a.maxTotalIterations = max
+	}
+}
+
 // New creates a new agent
 func New(client llm.Client, memory memoryx.Memory, opts ...AgentOption) *Agent {
 	agent := &Agent{
-		client: &client,
-		memory: memory,
+		client:             &client,
+		memory:             memory,
+		maxAutoIterations:  3,  // Default: 3 "auto" iterations
+		maxTotalIterations: 10, // Hard limit for safety
 	}
 
 	for _, opt := range opts {
@@ -121,6 +139,16 @@ func (a *Agent) RunStream(ctx context.Context, userInput string) (llm.Stream, er
 
 // handleToolCalls processes tool calls and returns the final response
 func (a *Agent) handleToolCalls(ctx context.Context, toolCalls []llm.ToolCall) (string, error) {
+	return a.handleToolCallsWithLimit(ctx, toolCalls, 0)
+}
+
+// handleToolCallsWithLimit processes tool calls with iteration limit
+func (a *Agent) handleToolCallsWithLimit(ctx context.Context, toolCalls []llm.ToolCall, iteration int) (string, error) {
+	// Hard limit check
+	if iteration >= a.maxTotalIterations {
+		return "", fmt.Errorf("maximum total iterations (%d) exceeded", a.maxTotalIterations)
+	}
+
 	// Process each tool call
 	for _, tc := range toolCalls {
 		// Call the tool
@@ -141,8 +169,25 @@ func (a *Agent) handleToolCalls(ctx context.Context, toolCalls []llm.ToolCall) (
 		return "", fmt.Errorf("failed to retrieve messages: %w", err)
 	}
 
+	// Smart tool choice: "auto" for first maxAutoIterations, then "none"
+	options := a.options
+	if a.tools != nil {
+		toolList := a.getToolsList()
+		if len(toolList) > 0 {
+			options = append(options, llm.WithTools(toolList))
+
+			if iteration < a.maxAutoIterations {
+				// First N iterations: allow "auto" tool calling
+				options = append(options, llm.WithToolChoice("auto"))
+			} else {
+				// After N iterations: force "none" to prevent more tool calls
+				options = append(options, llm.WithToolChoice("none"))
+			}
+		}
+	}
+
 	// Get next response from LLM with tool results
-	response, err := a.client.Chat(ctx, messages, a.options...)
+	response, err := a.client.Chat(ctx, messages, options...)
 	if err != nil {
 		return "", fmt.Errorf("LLM error: %w", err)
 	}
@@ -154,7 +199,7 @@ func (a *Agent) handleToolCalls(ctx context.Context, toolCalls []llm.ToolCall) (
 
 	// Check if we have more tool calls to handle
 	if len(response.Message.ToolCalls) > 0 {
-		return a.handleToolCalls(ctx, response.Message.ToolCalls)
+		return a.handleToolCallsWithLimit(ctx, response.Message.ToolCalls, iteration+1)
 	}
 
 	return response.Message.Content, nil
@@ -349,7 +394,17 @@ func (a *Agent) EvaluateWithTools(ctx context.Context, userInput string) (*Agent
 
 // evaluateToolCalls processes tool calls and records evaluation steps
 func (a *Agent) evaluateToolCalls(ctx context.Context, toolCalls []llm.ToolCall) (string, []AgentStep, error) {
+	return a.evaluateToolCallsWithLimit(ctx, toolCalls, 0)
+}
+
+// evaluateToolCallsWithLimit processes tool calls with iteration limit
+func (a *Agent) evaluateToolCallsWithLimit(ctx context.Context, toolCalls []llm.ToolCall, iteration int) (string, []AgentStep, error) {
 	var steps []AgentStep
+
+	// Hard limit check
+	if iteration >= a.maxTotalIterations {
+		return "", steps, fmt.Errorf("maximum total iterations (%d) exceeded", a.maxTotalIterations)
+	}
 
 	// Process each tool call
 	toolStep := AgentStep{
@@ -389,12 +444,18 @@ func (a *Agent) evaluateToolCalls(ctx context.Context, toolCalls []llm.ToolCall)
 	}
 
 	options := a.options
-	options = append(options, llm.WithToolChoice(nil))
 	if a.tools != nil {
 		toolList := a.getToolsList()
 		if len(toolList) > 0 {
 			options = append(options, llm.WithTools(toolList))
-			options = append(options, llm.WithToolChoice("auto"))
+
+			if iteration < a.maxAutoIterations {
+				// First N iterations: allow "auto" tool calling
+				options = append(options, llm.WithToolChoice("auto"))
+			} else {
+				// After N iterations: force "none" to prevent more tool calls
+				options = append(options, llm.WithToolChoice("none"))
+			}
 		}
 	}
 
@@ -414,7 +475,7 @@ func (a *Agent) evaluateToolCalls(ctx context.Context, toolCalls []llm.ToolCall)
 
 	// Check if we have more tool calls to handle
 	if len(response.Message.ToolCalls) > 0 {
-		result, moreSteps, err := a.evaluateToolCalls(ctx, response.Message.ToolCalls)
+		result, moreSteps, err := a.evaluateToolCallsWithLimit(ctx, response.Message.ToolCalls, iteration+1)
 		if err != nil {
 			return "", steps, err
 		}

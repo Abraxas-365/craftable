@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"regexp"
 	"sort"
@@ -192,20 +193,8 @@ func (w *WhatsAppProvider) buildComponentsFromAPITemplate(
 	parameters map[string]any,
 ) ([]whatsappTemplateComponent, error) {
 	var components []whatsappTemplateComponent
-	// A map to hold parameters for positional templates, sorted by key
-	var positionalParams []string
-	if template.ParameterFormat != "NAMED" {
-		keys := make([]string, 0, len(parameters))
-		for k := range parameters {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys) // Sort keys alphabetically for consistent order
-		for _, k := range keys {
-			positionalParams = append(positionalParams, fmt.Sprintf("%v", parameters[k]))
-		}
-	}
 
-	// Regex to find any placeholder like {{name}} or {{1}}
+	// Regex to find placeholders like {{name}} or {{1}}
 	re := regexp.MustCompile(`\{\{([^{}]+)\}\}`)
 
 	for _, apiComponent := range template.Components {
@@ -213,33 +202,72 @@ func (w *WhatsAppProvider) buildComponentsFromAPITemplate(
 
 		switch componentType {
 		case "header", "body":
-			matches := re.FindAllStringSubmatch(apiComponent.Text, -1)
-			if len(matches) == 0 {
-				continue // No parameters in this component
-			}
-
 			var componentParams []whatsappTemplateParameter
-			for i, match := range matches {
-				variableName := match[1]
-				var paramValue string
 
-				if template.ParameterFormat == "NAMED" {
-					if val, ok := parameters[variableName]; ok {
-						paramValue = fmt.Sprintf("%v", val)
+			if template.ParameterFormat == "NAMED" {
+				// For NAMED templates: use body_text_named_params order and include parameter_name
+				if apiComponent.Example != nil && len(apiComponent.Example.BodyTextNamedParams) > 0 {
+					logx.Debug("Using body_text_named_params order for NAMED template")
+					for _, namedParam := range apiComponent.Example.BodyTextNamedParams {
+						paramName := namedParam.ParamName
+						if val, ok := parameters[paramName]; ok {
+							componentParams = append(componentParams, whatsappTemplateParameter{
+								Type: "text",
+								Text: fmt.Sprintf("%v", val),
+								Name: paramName, // CRITICAL: Include parameter_name for NAMED templates
+							})
+							logx.Debug("NAMED template parameter: %s = %v", paramName, val)
+						} else {
+							logx.Warn("NAMED template parameter %s not found in provided parameters", paramName)
+							// Add empty parameter to maintain position
+							componentParams = append(componentParams, whatsappTemplateParameter{
+								Type: "text",
+								Text: "",
+								Name: paramName, // Still include the name even if empty
+							})
+						}
 					}
 				} else {
-					// For positional, use the ordered slice
-					if i < len(positionalParams) {
-						paramValue = positionalParams[i]
+					// Fallback: extract from regex if no body_text_named_params
+					logx.Warn("No body_text_named_params found, using regex fallback for NAMED template")
+					matches := re.FindAllStringSubmatch(apiComponent.Text, -1)
+					for _, match := range matches {
+						variableName := match[1]
+						if val, ok := parameters[variableName]; ok {
+							componentParams = append(componentParams, whatsappTemplateParameter{
+								Type: "text",
+								Text: fmt.Sprintf("%v", val),
+								Name: variableName, // Include parameter name
+							})
+						}
 					}
 				}
+			} else {
+				// For POSITIONAL templates: DON'T include parameter_name
+				matches := re.FindAllStringSubmatch(apiComponent.Text, -1)
+				if len(matches) == 0 {
+					continue
+				}
 
-				if paramValue != "" {
-					p := whatsappTemplateParameter{Type: "text", Text: paramValue}
-					if template.ParameterFormat == "NAMED" {
-						p.Name = variableName
+				// Sort parameters by key for consistent order
+				var positionalParams []string
+				keys := make([]string, 0, len(parameters))
+				for k := range parameters {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+				for _, k := range keys {
+					positionalParams = append(positionalParams, fmt.Sprintf("%v", parameters[k]))
+				}
+
+				for i := range matches {
+					if i < len(positionalParams) {
+						componentParams = append(componentParams, whatsappTemplateParameter{
+							Type: "text",
+							Text: positionalParams[i],
+							// NO Name field for positional templates
+						})
 					}
-					componentParams = append(componentParams, p)
 				}
 			}
 
@@ -251,8 +279,8 @@ func (w *WhatsAppProvider) buildComponentsFromAPITemplate(
 			}
 
 		case "buttons":
+			// Handle button parameters (for URL buttons with dynamic parts)
 			for btnIndex, button := range apiComponent.Buttons {
-				// We only care about dynamic URL buttons
 				if button.Type != "URL" {
 					continue
 				}
@@ -262,8 +290,7 @@ func (w *WhatsAppProvider) buildComponentsFromAPITemplate(
 					continue
 				}
 
-				// The dynamic part of the URL is passed in a single text parameter
-				variableName := matches[0][1] // {{1}} -> "1", {{token}} -> "token"
+				variableName := matches[0][1]
 				var paramValue string
 
 				if val, ok := parameters[variableName]; ok {
@@ -271,13 +298,21 @@ func (w *WhatsAppProvider) buildComponentsFromAPITemplate(
 				}
 
 				if paramValue != "" {
+					param := whatsappTemplateParameter{
+						Type: "text",
+						Text: paramValue,
+					}
+
+					// For NAMED templates, include parameter name in button params too
+					if template.ParameterFormat == "NAMED" {
+						param.Name = variableName
+					}
+
 					components = append(components, whatsappTemplateComponent{
-						Type:    "button",
-						SubType: "url",
-						Index:   strconv.Itoa(btnIndex),
-						Parameters: []whatsappTemplateParameter{
-							{Type: "text", Text: paramValue},
-						},
+						Type:       "button",
+						SubType:    "url",
+						Index:      strconv.Itoa(btnIndex),
+						Parameters: []whatsappTemplateParameter{param},
 					})
 				}
 			}
@@ -481,9 +516,16 @@ func (w *WhatsAppProvider) convertToWhatsAppMessage(
 			return nil, fmt.Errorf("media content is required for image messages")
 		}
 		whatsappMsg.Type = "image"
-		whatsappMsg.Image = &whatsappMediaMessage{
-			Link:    msg.Content.Media.URL,
-			Caption: msg.Content.Media.Caption,
+		if id, ok := w.parseMediaIDURL(msg.Content.Media.URL); ok {
+			whatsappMsg.Image = &whatsappMediaMessage{
+				ID:      id,
+				Caption: msg.Content.Media.Caption,
+			}
+		} else {
+			whatsappMsg.Image = &whatsappMediaMessage{
+				Link:    msg.Content.Media.URL,
+				Caption: msg.Content.Media.Caption,
+			}
 		}
 
 	case msgx.MessageTypeDocument:
@@ -491,10 +533,18 @@ func (w *WhatsAppProvider) convertToWhatsAppMessage(
 			return nil, fmt.Errorf("media content is required for document messages")
 		}
 		whatsappMsg.Type = "document"
-		whatsappMsg.Document = &whatsappDocumentMessage{
-			Link:     msg.Content.Media.URL,
-			Caption:  msg.Content.Media.Caption,
-			Filename: msg.Content.Media.Filename,
+		if id, ok := w.parseMediaIDURL(msg.Content.Media.URL); ok {
+			whatsappMsg.Document = &whatsappDocumentMessage{
+				ID:       id,
+				Caption:  msg.Content.Media.Caption,
+				Filename: msg.Content.Media.Filename,
+			}
+		} else {
+			whatsappMsg.Document = &whatsappDocumentMessage{
+				Link:     msg.Content.Media.URL,
+				Caption:  msg.Content.Media.Caption,
+				Filename: msg.Content.Media.Filename,
+			}
 		}
 
 	case msgx.MessageTypeAudio:
@@ -502,8 +552,16 @@ func (w *WhatsAppProvider) convertToWhatsAppMessage(
 			return nil, fmt.Errorf("media content is required for audio messages")
 		}
 		whatsappMsg.Type = "audio"
-		whatsappMsg.Audio = &whatsappMediaMessage{
-			Link: msg.Content.Media.URL,
+		if id, ok := w.parseMediaIDURL(msg.Content.Media.URL); ok {
+			// Send by ID (preferred for Graph uploads)
+			whatsappMsg.Audio = &whatsappMediaMessage{
+				ID: id,
+			}
+		} else {
+			// Fallback: send by link
+			whatsappMsg.Audio = &whatsappMediaMessage{
+				Link: msg.Content.Media.URL,
+			}
 		}
 
 	case msgx.MessageTypeVideo:
@@ -511,9 +569,16 @@ func (w *WhatsAppProvider) convertToWhatsAppMessage(
 			return nil, fmt.Errorf("media content is required for video messages")
 		}
 		whatsappMsg.Type = "video"
-		whatsappMsg.Video = &whatsappMediaMessage{
-			Link:    msg.Content.Media.URL,
-			Caption: msg.Content.Media.Caption,
+		if id, ok := w.parseMediaIDURL(msg.Content.Media.URL); ok {
+			whatsappMsg.Video = &whatsappMediaMessage{
+				ID:      id,
+				Caption: msg.Content.Media.Caption,
+			}
+		} else {
+			whatsappMsg.Video = &whatsappMediaMessage{
+				Link:    msg.Content.Media.URL,
+				Caption: msg.Content.Media.Caption,
+			}
 		}
 
 	case msgx.MessageTypeTemplate:
@@ -526,67 +591,84 @@ func (w *WhatsAppProvider) convertToWhatsAppMessage(
 			Language: whatsappLanguage{Code: msg.Content.Template.Language},
 		}
 
-		// Convert parameters for WhatsApp (FIXED VERSION)
 		if len(msg.Content.Template.Parameters) > 0 {
-			components := []whatsappTemplateComponent{
-				{
-					Type: "body",
-				},
-			}
-
-			// Check if we have numeric keys (indicating ordered parameters)
-			hasOrderedKeys := false
-			for key := range msg.Content.Template.Parameters {
-				if _, err := strconv.Atoi(key); err == nil {
-					hasOrderedKeys = true
-					break
-				}
-			}
-
-			if hasOrderedKeys {
-				// Handle ordered parameters (keys are "1", "2", "3", etc.)
-				type orderedParam struct {
-					order int
-					value any
-				}
-
-				var orderedParams []orderedParam
-
-				for key, value := range msg.Content.Template.Parameters {
-					if order, err := strconv.Atoi(key); err == nil {
-						orderedParams = append(orderedParams, orderedParam{order, value})
-					}
-				}
-
-				// Sort by order
-				sort.Slice(orderedParams, func(i, j int) bool {
-					return orderedParams[i].order < orderedParams[j].order
-				})
-
-				// Add in correct order
-				for _, param := range orderedParams {
-					components[0].Parameters = append(components[0].Parameters, whatsappTemplateParameter{
-						Type: "text",
-						Text: fmt.Sprintf("%v", param.value),
-					})
-				}
+			// Fetch template from WhatsApp API to understand its structure
+			template, err := w.GetTemplate(ctx, msg.Content.Template.Name, msg.Content.Template.Language)
+			if err != nil {
+				// Fallback to old logic if API fetch fails
+				logx.Warn("Failed to fetch template structure, using fallback logic: %v", err)
+				whatsappMsg.Template.Components = w.buildComponentsWithoutAPI(msg.Content.Template.Parameters)
 			} else {
-				// Handle named parameters - add them as-is (order doesn't matter for named)
-				for _, value := range msg.Content.Template.Parameters {
-					components[0].Parameters = append(components[0].Parameters, whatsappTemplateParameter{
-						Type: "text",
-						Text: fmt.Sprintf("%v", value),
-					})
+				// Use the proper API-based component builder
+				components, err := w.buildComponentsFromAPITemplate(template, msg.Content.Template.Parameters)
+				if err != nil {
+					return nil, fmt.Errorf("failed to build template components: %w", err)
 				}
+				whatsappMsg.Template.Components = components
 			}
-
-			whatsappMsg.Template.Components = components
 		}
 	default:
 		return nil, fmt.Errorf("unsupported message type: %s", msg.Type)
 	}
 
 	return whatsappMsg, nil
+}
+
+func (w *WhatsAppProvider) buildComponentsWithoutAPI(parameters map[string]any) []whatsappTemplateComponent {
+	components := []whatsappTemplateComponent{
+		{
+			Type: "body",
+		},
+	}
+
+	// Check if we have numeric keys (indicating ordered parameters)
+	hasOrderedKeys := false
+	for key := range parameters {
+		if _, err := strconv.Atoi(key); err == nil {
+			hasOrderedKeys = true
+			break
+		}
+	}
+
+	if hasOrderedKeys {
+		// Handle ordered parameters (keys are "1", "2", "3", etc.)
+		type orderedParam struct {
+			order int
+			value any
+		}
+
+		var orderedParams []orderedParam
+		for key, value := range parameters {
+			if order, err := strconv.Atoi(key); err == nil {
+				orderedParams = append(orderedParams, orderedParam{order, value})
+			}
+		}
+
+		// Sort by order
+		sort.Slice(orderedParams, func(i, j int) bool {
+			return orderedParams[i].order < orderedParams[j].order
+		})
+
+		// Add in correct order
+		for _, param := range orderedParams {
+			components[0].Parameters = append(components[0].Parameters, whatsappTemplateParameter{
+				Type: "text",
+				Text: fmt.Sprintf("%v", param.value),
+			})
+		}
+	} else {
+		// WARNING: This fallback for named parameters is unreliable
+		// since we don't know the template structure
+		logx.Warn("Using unreliable fallback for named template parameters")
+		for _, value := range parameters {
+			components[0].Parameters = append(components[0].Parameters, whatsappTemplateParameter{
+				Type: "text",
+				Text: fmt.Sprintf("%v", value),
+			})
+		}
+	}
+
+	return components
 }
 
 // SendBulk sends multiple messages
@@ -1214,12 +1296,19 @@ type whatsappTextMessage struct {
 type whatsappMediaMessage struct {
 	Link    string `json:"link,omitempty"`
 	Caption string `json:"caption,omitempty"`
+	ID      string `json:"id,omitempty"` // NEW: support sending media by id
 }
 
 type whatsappDocumentMessage struct {
 	Link     string `json:"link,omitempty"`
 	Caption  string `json:"caption,omitempty"`
 	Filename string `json:"filename,omitempty"`
+	ID       string `json:"id,omitempty"` // NEW: support sending document by id
+}
+
+// upload response
+type whatsappMediaUploadResponse struct {
+	ID string `json:"id"`
 }
 
 type whatsappTemplateMessage struct {
@@ -1242,7 +1331,7 @@ type whatsappTemplateComponent struct {
 type whatsappTemplateParameter struct {
 	Type string `json:"type"` // "text", "currency", "date_time", "image", etc.
 	Text string `json:"text,omitempty"`
-	Name string `json:"name,omitempty"` // For NAMED templates
+	Name string `json:"parameter_name,omitempty"` // For NAMED templates - field name is "parameter_name" not "name"
 }
 
 // Response structures
@@ -1456,4 +1545,76 @@ type whatsappTypingResponse struct {
 	MessagingProduct string                    `json:"messaging_product"`
 	Contacts         []whatsappContact         `json:"contacts"`
 	Messages         []whatsappMessageResponse `json:"messages"`
+}
+
+// UploadMedia uploads binary data to WhatsApp Graph and returns the media object ID.
+// Docs: POST https://graph.facebook.com/{version}/{phone-number-id}/media
+// form-data: messaging_product=whatsapp, file=@..., type=<mime>
+func (w *WhatsAppProvider) UploadMedia(ctx context.Context, filename string, mimeType string, data []byte) (string, error) {
+	url := fmt.Sprintf("%s/media", w.baseURL)
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	// messaging_product
+	if err := writer.WriteField("messaging_product", "whatsapp"); err != nil {
+		return "", fmt.Errorf("failed to set messaging_product: %w", err)
+	}
+
+	// type (mime type)
+	if strings.TrimSpace(mimeType) != "" {
+		if err := writer.WriteField("type", mimeType); err != nil {
+			return "", fmt.Errorf("failed to set mime type: %w", err)
+		}
+	}
+
+	// file (binary)
+	fw, err := writer.CreateFormFile("file", filename)
+	if err != nil {
+		return "", fmt.Errorf("failed to create form file: %w", err)
+	}
+	if _, err := io.Copy(fw, bytes.NewReader(data)); err != nil {
+		return "", fmt.Errorf("failed to write file data: %w", err)
+	}
+
+	_ = writer.Close()
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, &body)
+	if err != nil {
+		return "", fmt.Errorf("failed to create upload request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+w.config.AccessToken)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := w.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("upload request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", w.handleAPIError(resp)
+	}
+
+	var upResp whatsappMediaUploadResponse
+	if err := json.NewDecoder(resp.Body).Decode(&upResp); err != nil {
+		return "", fmt.Errorf("failed to decode upload response: %w", err)
+	}
+	if strings.TrimSpace(upResp.ID) == "" {
+		return "", fmt.Errorf("empty media id in upload response")
+	}
+
+	logx.Debug("WhatsApp media uploaded successfully; id=%s, filename=%s, mimeType=%s", upResp.ID, filename, mimeType)
+	return upResp.ID, nil
+}
+
+func (w *WhatsAppProvider) parseMediaIDURL(url string) (string, bool) {
+	const prefix = "media_id:"
+	if id, ok := strings.CutPrefix(url, prefix); ok {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			return id, true
+		}
+	}
+	return "", false
 }

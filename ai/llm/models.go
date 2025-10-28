@@ -25,6 +25,17 @@ type Usage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+	// Reasoning tokens are only present for o-series models
+	ReasoningTokens  int `json:"reasoning_tokens,omitempty"`
+	// Additional details for completion tokens
+	CompletionTokensDetails *CompletionTokensDetails `json:"completion_tokens_details,omitempty"`
+}
+
+// CompletionTokensDetails provides a breakdown of completion tokens
+type CompletionTokensDetails struct {
+	ReasoningTokens          int `json:"reasoning_tokens,omitempty"`
+	AcceptedPredictionTokens int `json:"accepted_prediction_tokens,omitempty"`
+	RejectedPredictionTokens int `json:"rejected_prediction_tokens,omitempty"`
 }
 
 // FunctionCall represents a function call in a message

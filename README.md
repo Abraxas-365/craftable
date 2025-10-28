@@ -140,6 +140,7 @@ A collection of packages for working with AI services and capabilities:
 Interact with large language models with a clean, flexible interface:
 
 - **Multiple Providers**: Support for various LLM providers (OpenAI, etc.)
+- **Latest Models**: Compatible with GPT-4, GPT-4o, GPT-5, and other OpenAI model series
 - **Streaming Support**: Stream responses for real-time interactions
 - **Message Management**: Structured conversation history handling
 - **Tool Integration**: Support for function calling and tool usage
@@ -804,7 +805,7 @@ func main() {
     }
 
     resp, err := client.Chat(context.Background(), messages,
-        llm.WithModel("gpt-4o"),
+        llm.WithModel("gpt-4o"), // Supports GPT-4, GPT-4o, GPT-5, and other OpenAI models
         llm.WithTemperature(0.7),
     )
 
@@ -844,6 +845,37 @@ func main() {
     stream.Close()
 }
 ```
+
+#### Using GPT-5 Models
+
+The AI package fully supports GPT-5 series models. Simply specify the model name when making requests:
+
+```go
+// Use GPT-5 for chat
+resp, err := client.Chat(context.Background(), messages,
+    llm.WithModel("gpt-5"),
+    llm.WithTemperature(0.7),
+)
+
+// Use GPT-5 with streaming
+stream, err := client.ChatStream(context.Background(), messages,
+    llm.WithModel("gpt-5-turbo"),
+    llm.WithMaxTokens(2000),
+)
+
+// Use GPT-5 with agents
+myAgent := agentx.New(
+    *client,
+    mem,
+    agentx.WithTools(tools),
+    agentx.WithOptions(
+        llm.WithModel("gpt-5"),
+        llm.WithTemperature(0.7),
+    ),
+)
+```
+
+**Note:** GPT-5 models use the same token encoding as GPT-4 (`cl100k_base`), so all token-based features like splitters and context management work seamlessly.
 
 ### Agent Interaction
 

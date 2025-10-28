@@ -225,6 +225,11 @@ func NewSimpleTokenSplitter(chunkSize, chunkOverlap int, model string) (*SimpleT
 
 // getEncodingForModel returns the appropriate encoding name for a given model
 func getEncodingForModel(model string) string {
+	// GPT-5 models (using same encoding as GPT-4)
+	if strings.HasPrefix(model, "gpt-5") {
+		return "cl100k_base"
+	}
+
 	// GPT-4 models
 	if strings.HasPrefix(model, "gpt-4") {
 		return "cl100k_base"

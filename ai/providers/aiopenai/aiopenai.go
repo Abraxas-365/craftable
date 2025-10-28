@@ -55,10 +55,16 @@ func (p *OpenAIProvider) Chat(ctx context.Context, messages []llm.Message, opts 
 		opt(options)
 	}
 
-	// Convert messages
+	// Sanitize options based on model capabilities
+	llm.SanitizeOptionsForModel(options.Model, options)
+
+	// Check if this is a reasoning model
+	isReasoningModel := llm.IsReasoningModel(options.Model)
+
+	// Convert messages (handle developer messages for o-series models)
 	openAIMessages := make([]openai.ChatCompletionMessageParamUnion, 0, len(messages))
 	for _, msg := range messages {
-		openAIMsg, err := convertToOpenAIMessage(msg)
+		openAIMsg, err := convertToOpenAIMessage(msg, isReasoningModel)
 		if err != nil {
 			return llm.Response{}, err
 		}
@@ -75,17 +81,24 @@ func (p *OpenAIProvider) Chat(ctx context.Context, messages []llm.Message, opts 
 		params.Model = options.Model
 	}
 
-	// Set optional parameters
-	if options.Temperature != 0 {
+	// Set optional parameters based on model capabilities
+	capabilities := llm.GetModelCapabilities(options.Model)
+
+	if capabilities.SupportsTemperature && options.Temperature != 0 {
 		params.Temperature = openai.Float(float64(options.Temperature))
 	}
 
-	if options.TopP != 0 {
+	if capabilities.SupportsTopP && options.TopP != 0 {
 		params.TopP = openai.Float(float64(options.TopP))
 	}
 
+	// For o-series models, use MaxCompletionTokens instead of MaxTokens
 	if options.MaxTokens > 0 {
-		params.MaxTokens = openai.Int(int64(options.MaxTokens))
+		if isReasoningModel {
+			params.MaxCompletionTokens = openai.Int(int64(options.MaxTokens))
+		} else {
+			params.MaxTokens = openai.Int(int64(options.MaxTokens))
+		}
 	}
 
 	// Handle stop sequences
@@ -115,9 +128,59 @@ func (p *OpenAIProvider) Chat(ctx context.Context, messages []llm.Message, opts 
 		params.ResponseFormat = convertToResponseFormatParam(options.ResponseFormat)
 	}
 
+	// Set penalties (only for non-o-series models)
+	if capabilities.SupportsPenalties {
+		if options.PresencePenalty != 0 {
+			params.PresencePenalty = openai.Float(float64(options.PresencePenalty))
+		}
+		if options.FrequencyPenalty != 0 {
+			params.FrequencyPenalty = openai.Float(float64(options.FrequencyPenalty))
+		}
+	}
+
+	// Set logit bias
+	if len(options.LogitBias) > 0 {
+		logitBias := make(map[string]int64)
+		for token, bias := range options.LogitBias {
+			logitBias[fmt.Sprintf("%d", token)] = int64(bias)
+		}
+		params.LogitBias = logitBias
+	}
+
+	// Set reasoning effort (o-series models only)
+	// Note: This feature may not be available in all SDK versions
+	// If your SDK version supports it, uncomment and adjust the code below:
+	/*
+	if capabilities.SupportsReasoningEffort && options.ReasoningEffort != "" {
+		params.ReasoningEffort = openai.String(options.ReasoningEffort)
+	}
+	*/
+
+	// Set seed
 	if options.Seed != 0 {
 		params.Seed = openai.Int(options.Seed)
 	}
+
+	// Set parallel tool calls (if supported by SDK)
+	if options.ParallelToolCalls != nil {
+		params.ParallelToolCalls = openai.Bool(*options.ParallelToolCalls)
+	}
+
+	// Set store output (if supported by SDK)
+	if options.StoreOutput != nil {
+		params.Store = openai.Bool(*options.StoreOutput)
+	}
+
+	// Set metadata (if supported by SDK)
+	if len(options.Metadata) > 0 {
+		params.Metadata = options.Metadata
+	}
+
+	// Set user
+	if options.User != "" {
+		params.User = openai.String(options.User)
+	}
+
 	// Make the API call
 	completion, err := p.client.Chat.Completions.New(ctx, params)
 	if err != nil {
@@ -135,10 +198,16 @@ func (p *OpenAIProvider) ChatStream(ctx context.Context, messages []llm.Message,
 		opt(options)
 	}
 
-	// Convert messages
+	// Sanitize options based on model capabilities
+	llm.SanitizeOptionsForModel(options.Model, options)
+
+	// Check if this is a reasoning model
+	isReasoningModel := llm.IsReasoningModel(options.Model)
+
+	// Convert messages (handle developer messages for o-series models)
 	openAIMessages := make([]openai.ChatCompletionMessageParamUnion, 0, len(messages))
 	for _, msg := range messages {
-		openAIMsg, err := convertToOpenAIMessage(msg)
+		openAIMsg, err := convertToOpenAIMessage(msg, isReasoningModel)
 		if err != nil {
 			return nil, err
 		}
@@ -155,17 +224,24 @@ func (p *OpenAIProvider) ChatStream(ctx context.Context, messages []llm.Message,
 		params.Model = options.Model
 	}
 
-	// Set optional parameters with type conversions
-	if options.Temperature != 0 {
+	// Set optional parameters based on model capabilities
+	capabilities := llm.GetModelCapabilities(options.Model)
+
+	if capabilities.SupportsTemperature && options.Temperature != 0 {
 		params.Temperature = openai.Float(float64(options.Temperature))
 	}
 
-	if options.TopP != 0 {
+	if capabilities.SupportsTopP && options.TopP != 0 {
 		params.TopP = openai.Float(float64(options.TopP))
 	}
 
+	// For o-series models, use MaxCompletionTokens instead of MaxTokens
 	if options.MaxTokens > 0 {
-		params.MaxTokens = openai.Int(int64(options.MaxTokens))
+		if isReasoningModel {
+			params.MaxCompletionTokens = openai.Int(int64(options.MaxTokens))
+		} else {
+			params.MaxTokens = openai.Int(int64(options.MaxTokens))
+		}
 	}
 
 	// Handle stop sequences
@@ -193,6 +269,65 @@ func (p *OpenAIProvider) ChatStream(ctx context.Context, messages []llm.Message,
 		params.ResponseFormat = convertToJSONFormatParam()
 	} else if options.ResponseFormat != nil {
 		params.ResponseFormat = convertToResponseFormatParam(options.ResponseFormat)
+	}
+
+	// Set penalties (only for non-o-series models)
+	if capabilities.SupportsPenalties {
+		if options.PresencePenalty != 0 {
+			params.PresencePenalty = openai.Float(float64(options.PresencePenalty))
+		}
+		if options.FrequencyPenalty != 0 {
+			params.FrequencyPenalty = openai.Float(float64(options.FrequencyPenalty))
+		}
+	}
+
+	// Set logit bias
+	if len(options.LogitBias) > 0 {
+		logitBias := make(map[string]int64)
+		for token, bias := range options.LogitBias {
+			logitBias[fmt.Sprintf("%d", token)] = int64(bias)
+		}
+		params.LogitBias = logitBias
+	}
+
+	// Set reasoning effort (o-series models only)
+	// Note: This feature may not be available in all SDK versions
+	// If your SDK version supports it, uncomment and adjust the code below:
+	/*
+	if capabilities.SupportsReasoningEffort && options.ReasoningEffort != "" {
+		params.ReasoningEffort = openai.String(options.ReasoningEffort)
+	}
+	*/
+
+	// Set seed
+	if options.Seed != 0 {
+		params.Seed = openai.Int(options.Seed)
+	}
+
+	// Set parallel tool calls (if supported by SDK)
+	if options.ParallelToolCalls != nil {
+		params.ParallelToolCalls = openai.Bool(*options.ParallelToolCalls)
+	}
+
+	// Set store output (if supported by SDK)
+	if options.StoreOutput != nil {
+		params.Store = openai.Bool(*options.StoreOutput)
+	}
+
+	// Set metadata (if supported by SDK)
+	if len(options.Metadata) > 0 {
+		params.Metadata = options.Metadata
+	}
+
+	// Set user
+	if options.User != "" {
+		params.User = openai.String(options.User)
+	}
+
+	// Set stream options for enhanced streaming (include usage in stream)
+	// This may require a newer SDK version
+	params.StreamOptions = openai.ChatCompletionStreamOptionsParam{
+		IncludeUsage: openai.Bool(true),
 	}
 
 	// Create the stream
@@ -211,6 +346,7 @@ type openAIStream struct {
 	accumulator openai.ChatCompletionAccumulator
 	lastError   error
 	current     llm.Message
+	usage       llm.Usage // Track usage information from the stream
 }
 
 func (s *openAIStream) Next() (llm.Message, error) {
@@ -233,8 +369,34 @@ func (s *openAIStream) Next() (llm.Message, error) {
 	chunk := s.stream.Current()
 	s.accumulator.AddChunk(chunk)
 
+	// Handle usage information (will be in the last chunk when stream_options.include_usage=true)
+	// Check if usage data is present by looking at total tokens
+	if chunk.Usage.TotalTokens > 0 {
+		s.usage = llm.Usage{
+			PromptTokens:     int(chunk.Usage.PromptTokens),
+			CompletionTokens: int(chunk.Usage.CompletionTokens),
+			TotalTokens:      int(chunk.Usage.TotalTokens),
+		}
+		// Handle completion tokens details (includes reasoning tokens for o-series models)
+		// Check if reasoning tokens are present
+		if chunk.Usage.CompletionTokensDetails.ReasoningTokens > 0 {
+			s.usage.CompletionTokensDetails = &llm.CompletionTokensDetails{
+				ReasoningTokens:          int(chunk.Usage.CompletionTokensDetails.ReasoningTokens),
+				AcceptedPredictionTokens: int(chunk.Usage.CompletionTokensDetails.AcceptedPredictionTokens),
+				RejectedPredictionTokens: int(chunk.Usage.CompletionTokensDetails.RejectedPredictionTokens),
+			}
+			// Also set the top-level reasoning tokens for convenience
+			s.usage.ReasoningTokens = int(chunk.Usage.CompletionTokensDetails.ReasoningTokens)
+		}
+		// Store usage in message metadata for access
+		if s.current.Metadata == nil {
+			s.current.Metadata = make(map[string]any)
+		}
+		s.current.Metadata["usage"] = s.usage
+	}
+
 	if len(chunk.Choices) == 0 {
-		return llm.Message{}, nil
+		return s.current, nil
 	}
 
 	delta := chunk.Choices[0].Delta
@@ -286,9 +448,19 @@ func (s *openAIStream) Close() error {
 
 // Helper functions to convert between the two libraries
 
-func convertToOpenAIMessage(msg llm.Message) (openai.ChatCompletionMessageParamUnion, error) {
+func convertToOpenAIMessage(msg llm.Message, isReasoningModel bool) (openai.ChatCompletionMessageParamUnion, error) {
 	switch msg.Role {
 	case llm.RoleSystem:
+		// o-series models use "developer" role instead of "system"
+		if isReasoningModel {
+			return openai.ChatCompletionMessageParamUnion{
+				OfDeveloper: &openai.ChatCompletionDeveloperMessageParam{
+					Content: openai.ChatCompletionDeveloperMessageParamContentUnion{
+						OfString: openai.String(msg.Content),
+					},
+				},
+			}, nil
+		}
 		return openai.SystemMessage(msg.Content), nil
 	case llm.RoleUser:
 		return openai.UserMessage(msg.Content), nil
@@ -492,6 +664,18 @@ func convertFromOpenAIResponse(completion *openai.ChatCompletion) (llm.Response,
 		PromptTokens:     int(completion.Usage.PromptTokens),
 		CompletionTokens: int(completion.Usage.CompletionTokens),
 		TotalTokens:      int(completion.Usage.TotalTokens),
+	}
+
+	// Handle completion tokens details (includes reasoning tokens for o-series models)
+	// Check if reasoning tokens are present
+	if completion.Usage.CompletionTokensDetails.ReasoningTokens > 0 {
+		usage.CompletionTokensDetails = &llm.CompletionTokensDetails{
+			ReasoningTokens:          int(completion.Usage.CompletionTokensDetails.ReasoningTokens),
+			AcceptedPredictionTokens: int(completion.Usage.CompletionTokensDetails.AcceptedPredictionTokens),
+			RejectedPredictionTokens: int(completion.Usage.CompletionTokensDetails.RejectedPredictionTokens),
+		}
+		// Also set the top-level reasoning tokens for convenience
+		usage.ReasoningTokens = int(completion.Usage.CompletionTokensDetails.ReasoningTokens)
 	}
 
 	return llm.Response{

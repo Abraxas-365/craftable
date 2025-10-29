@@ -2,23 +2,30 @@ package llm
 
 // ChatOptions contains options for generating chat completions
 type ChatOptions struct {
-	Model            string            // Model name/identifier
-	Temperature      float32           // Controls randomness (0.0 to 1.0)
-	TopP             float32           // Controls diversity (0.0 to 1.0)
-	MaxTokens        int               // Maximum number of tokens to generate
-	Stop             []string          // Stop sequences
-	Tools            []Tool            // Available tools
-	Functions        []Function        // Available functions for backward compatibility
-	ToolChoice       any               // Force specific tool
-	ResponseFormat   *ResponseFormat   // Response format specification
-	PresencePenalty  float32           // Penalty for new tokens based on presence
-	FrequencyPenalty float32           // Penalty for new tokens based on frequency
-	LogitBias        map[int]float32   // Modify the likelihood of specified tokens appearing
-	Seed             int64             // Random seed for deterministic results
-	Stream           bool              // Whether to stream the response
-	User             string            // Identifier representing end-user
-	JSONMode         bool              // Shorthand for JSON response format
-	Headers          map[string]string // Custom headers to send with the request
+	Model               string            // Model name/identifier
+	Temperature         float32           // Controls randomness (0.0 to 1.0)
+	TopP                float32           // Controls diversity (0.0 to 1.0)
+	MaxTokens           int               // Maximum number of tokens to generate (legacy)
+	MaxCompletionTokens int               // Maximum completion tokens (preferred for new models)
+	Stop                []string          // Stop sequences
+	Tools               []Tool            // Available tools
+	Functions           []Function        // Available functions for backward compatibility
+	ToolChoice          any               // Force specific tool
+	ResponseFormat      *ResponseFormat   // Response format specification
+	PresencePenalty     float32           // Penalty for new tokens based on presence
+	FrequencyPenalty    float32           // Penalty for new tokens based on frequency
+	LogitBias           map[int]float32   // Modify the likelihood of specified tokens appearing
+	Seed                int64             // Random seed for deterministic results
+	Stream              bool              // Whether to stream the response
+	User                string            // Identifier representing end-user
+	JSONMode            bool              // Shorthand for JSON response format
+	Headers             map[string]string // Custom headers to send with the request
+
+	// Reasoning model specific options
+	ReasoningEffort string // Reasoning effort level: "low", "medium", "high"
+
+	// API selection
+	UseResponsesAPI bool // Use Responses API instead of Chat Completions
 }
 
 // Option is a function type to modify ChatOptions
@@ -45,10 +52,17 @@ func WithTopP(topP float32) Option {
 	}
 }
 
-// WithMaxTokens sets the maximum number of tokens to generate
+// WithMaxTokens sets the maximum number of tokens to generate (legacy)
 func WithMaxTokens(tokens int) Option {
 	return func(o *ChatOptions) {
 		o.MaxTokens = tokens
+	}
+}
+
+// WithMaxCompletionTokens sets the maximum completion tokens (preferred)
+func WithMaxCompletionTokens(tokens int) Option {
+	return func(o *ChatOptions) {
+		o.MaxCompletionTokens = tokens
 	}
 }
 
@@ -104,6 +118,7 @@ func WithHeader(key, value string) Option {
 	}
 }
 
+// WithPresencePenalty sets the presence penalty
 func WithPresencePenalty(penalty float32) Option {
 	return func(o *ChatOptions) {
 		o.PresencePenalty = penalty
@@ -128,6 +143,21 @@ func WithSeed(seed int64) Option {
 func WithUser(user string) Option {
 	return func(o *ChatOptions) {
 		o.User = user
+	}
+}
+
+// WithReasoningEffort sets the reasoning effort for reasoning models (o1, o3)
+// Valid values: "low", "medium", "high"
+func WithReasoningEffort(effort string) Option {
+	return func(o *ChatOptions) {
+		o.ReasoningEffort = effort
+	}
+}
+
+// WithResponsesAPI enables the Responses API instead of Chat Completions
+func WithResponsesAPI() Option {
+	return func(o *ChatOptions) {
+		o.UseResponsesAPI = true
 	}
 }
 

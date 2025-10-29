@@ -1,12 +1,14 @@
 package aiopenai
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -18,14 +20,16 @@ import (
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 	"github.com/openai/openai-go/packages/param"
-	"github.com/openai/openai-go/packages/ssestream"
 	"github.com/openai/openai-go/shared"
 	"github.com/openai/openai-go/shared/constant"
 )
 
-// OpenAIProvider implements the LLM interface for OpenAI
+// OpenAIProvider implements the LLM interface for OpenAI using Responses API
 type OpenAIProvider struct {
-	client openai.Client
+	client     openai.Client
+	httpClient *http.Client
+	apiKey     string
+	baseURL    string
 }
 
 // NewOpenAIProvider creates a new OpenAI provider
@@ -38,23 +42,335 @@ func NewOpenAIProvider(apiKey string, opts ...option.RequestOption) *OpenAIProvi
 	client := openai.NewClient(options...)
 
 	return &OpenAIProvider{
-		client: client,
+		client:     client,
+		httpClient: &http.Client{},
+		apiKey:     apiKey,
+		baseURL:    "https://api.openai.com/v1",
 	}
 }
 
 func defaultChatOptions() *llm.ChatOptions {
 	options := llm.DefaultOptions()
 	options.Model = "gpt-4o"
+	options.UseResponsesAPI = true // Default to Responses API
 	return options
 }
 
-// Chat implements the LLM interface
+// ResponsesInput represents input messages for the Responses API
+type ResponsesInput struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// ResponsesTool represents a tool in the Responses API
+type ResponsesTool struct {
+	Type     string                 `json:"type"`
+	Function *ResponsesToolFunction `json:"function,omitempty"`
+}
+
+type ResponsesToolFunction struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	Parameters  map[string]any `json:"parameters,omitempty"`
+}
+
+// ResponsesRequest represents a request to the Responses API
+type ResponsesRequest struct {
+	Model               string              `json:"model"`
+	Input               []ResponsesInput    `json:"input"`
+	Tools               []ResponsesTool     `json:"tools,omitempty"`
+	PreviousResponseID  string              `json:"previous_response_id,omitempty"`
+	Temperature         *float64            `json:"temperature,omitempty"`
+	MaxCompletionTokens *int                `json:"max_completion_tokens,omitempty"`
+	TopP                *float64            `json:"top_p,omitempty"`
+	PresencePenalty     *float64            `json:"presence_penalty,omitempty"`
+	FrequencyPenalty    *float64            `json:"frequency_penalty,omitempty"`
+	Seed                *int64              `json:"seed,omitempty"`
+	User                string              `json:"user,omitempty"`
+	Stream              bool                `json:"stream,omitempty"`
+	ResponseFormat      map[string]any      `json:"response_format,omitempty"`
+	Reasoning           *ResponsesReasoning `json:"reasoning,omitempty"`
+	Store               bool                `json:"store,omitempty"`
+	Metadata            map[string]string   `json:"metadata,omitempty"`
+}
+
+type ResponsesReasoning struct {
+	Effort string `json:"effort,omitempty"` // "low", "medium", "high"
+}
+
+// ResponsesChoice represents a choice in the response
+type ResponsesChoice struct {
+	Index        int              `json:"index"`
+	Message      ResponsesMessage `json:"message"`
+	FinishReason string           `json:"finish_reason"`
+}
+
+type ResponsesMessage struct {
+	Role      string              `json:"role"`
+	Content   string              `json:"content"`
+	ToolCalls []ResponsesToolCall `json:"tool_calls,omitempty"`
+}
+
+type ResponsesToolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
+// ResponsesResponse represents a response from the Responses API
+type ResponsesResponse struct {
+	ID      string            `json:"id"`
+	Object  string            `json:"object"`
+	Created int64             `json:"created"`
+	Model   string            `json:"model"`
+	Choices []ResponsesChoice `json:"choices"`
+	Usage   struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	} `json:"usage"`
+}
+
+// Chat implements the LLM interface using Responses API
 func (p *OpenAIProvider) Chat(ctx context.Context, messages []llm.Message, opts ...llm.Option) (llm.Response, error) {
 	options := defaultChatOptions()
 	for _, opt := range opts {
 		opt(options)
 	}
 
+	// Use Responses API if specified (default) or Chat Completions as fallback
+	if options.UseResponsesAPI {
+		return p.chatWithResponses(ctx, messages, options)
+	}
+	return p.chatWithCompletions(ctx, messages, options)
+}
+
+// chatWithResponses uses the Responses API
+func (p *OpenAIProvider) chatWithResponses(ctx context.Context, messages []llm.Message, options *llm.ChatOptions) (llm.Response, error) {
+	// Convert messages to Responses API format
+	input := make([]ResponsesInput, 0, len(messages))
+	for _, msg := range messages {
+		role := msg.Role
+		// Convert "system" to "developer" for Responses API
+		if role == llm.RoleSystem {
+			role = "developer"
+		}
+		input = append(input, ResponsesInput{
+			Role:    role,
+			Content: msg.Content,
+		})
+	}
+
+	// Convert tools if any
+	var tools []ResponsesTool
+	if len(options.Tools) > 0 {
+		tools = make([]ResponsesTool, 0, len(options.Tools))
+		for _, tool := range options.Tools {
+			if tool.Type == "function" {
+				// Convert parameters to map[string]any
+				var params map[string]any
+				if tool.Function.Parameters != nil {
+					switch p := tool.Function.Parameters.(type) {
+					case map[string]any:
+						params = p
+					default:
+						// Try to marshal and unmarshal to convert
+						paramBytes, _ := json.Marshal(tool.Function.Parameters)
+						_ = json.Unmarshal(paramBytes, &params)
+					}
+				}
+
+				tools = append(tools, ResponsesTool{
+					Type: "function",
+					Function: &ResponsesToolFunction{
+						Name:        tool.Function.Name,
+						Description: tool.Function.Description,
+						Parameters:  params,
+					},
+				})
+			} else {
+				// Built-in tools like "web_search", "file_search"
+				tools = append(tools, ResponsesTool{Type: tool.Type})
+			}
+		}
+	}
+
+	// Build request
+	req := ResponsesRequest{
+		Model: options.Model,
+		Input: input,
+		Tools: tools,
+		Store: true, // Enable state storage by default
+	}
+
+	// Set optional parameters
+	if options.Temperature != 0 {
+		temp := float64(options.Temperature)
+		req.Temperature = &temp
+	}
+
+	if options.TopP != 0 {
+		topP := float64(options.TopP)
+		req.TopP = &topP
+	}
+
+	if options.MaxCompletionTokens > 0 {
+		req.MaxCompletionTokens = &options.MaxCompletionTokens
+	} else if options.MaxTokens > 0 {
+		// Fallback to legacy MaxTokens
+		req.MaxCompletionTokens = &options.MaxTokens
+	}
+
+	if options.PresencePenalty != 0 {
+		penalty := float64(options.PresencePenalty)
+		req.PresencePenalty = &penalty
+	}
+
+	if options.FrequencyPenalty != 0 {
+		penalty := float64(options.FrequencyPenalty)
+		req.FrequencyPenalty = &penalty
+	}
+
+	if options.Seed != 0 {
+		req.Seed = &options.Seed
+	}
+
+	if options.User != "" {
+		req.User = options.User
+	}
+
+	// Handle reasoning effort for reasoning models
+	if options.ReasoningEffort != "" {
+		req.Reasoning = &ResponsesReasoning{
+			Effort: options.ReasoningEffort,
+		}
+	}
+
+	// Handle response format
+	if options.JSONMode {
+		req.ResponseFormat = map[string]any{
+			"type": "json_object",
+		}
+	} else if options.ResponseFormat != nil {
+		switch options.ResponseFormat.Type {
+		case llm.JSONObject:
+			req.ResponseFormat = map[string]any{
+				"type": "json_object",
+			}
+		case llm.JSONSchema:
+			req.ResponseFormat = map[string]any{
+				"type": "json_schema",
+				"json_schema": map[string]any{
+					"name":   "schema",
+					"schema": options.ResponseFormat.JSONSchema,
+				},
+			}
+		}
+	}
+
+	// Make the API call
+	apiResp, err := p.callResponsesAPI(ctx, req, options.Headers)
+	if err != nil {
+		return llm.Response{}, err
+	}
+
+	// Convert to llm.Response
+	if len(apiResp.Choices) == 0 {
+		return llm.Response{}, fmt.Errorf("no choices in response")
+	}
+
+	choice := apiResp.Choices[0]
+	message := llm.Message{
+		Role:    choice.Message.Role,
+		Content: choice.Message.Content,
+	}
+
+	// Convert tool calls if any
+	if len(choice.Message.ToolCalls) > 0 {
+		toolCalls := make([]llm.ToolCall, 0, len(choice.Message.ToolCalls))
+		for _, tc := range choice.Message.ToolCalls {
+			toolCalls = append(toolCalls, llm.ToolCall{
+				ID:   tc.ID,
+				Type: tc.Type,
+				Function: llm.FunctionCall{
+					Name:      tc.Function.Name,
+					Arguments: tc.Function.Arguments,
+				},
+			})
+		}
+		message.ToolCalls = toolCalls
+	}
+
+	return llm.Response{
+		Message: message,
+		Usage: llm.Usage{
+			PromptTokens:     apiResp.Usage.PromptTokens,
+			CompletionTokens: apiResp.Usage.CompletionTokens,
+			TotalTokens:      apiResp.Usage.TotalTokens,
+		},
+	}, nil
+}
+
+// callResponsesAPI makes a direct HTTP call to the Responses API
+func (p *OpenAIProvider) callResponsesAPI(ctx context.Context, req ResponsesRequest, headers map[string]string) (*ResponsesResponse, error) {
+	// Marshal request to JSON
+	reqBody, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	// Create HTTP request
+	httpReq, err := http.NewRequestWithContext(
+		ctx,
+		"POST",
+		fmt.Sprintf("%s/responses", p.baseURL),
+		bytes.NewReader(reqBody),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set headers
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", p.apiKey))
+
+	// Add custom headers
+	for key, value := range headers {
+		httpReq.Header.Set(key, value)
+	}
+
+	// Make request
+	resp, err := p.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response body
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Check status code
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	// Unmarshal response
+	var apiResp ResponsesResponse
+	if err := json.Unmarshal(respBody, &apiResp); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	return &apiResp, nil
+}
+
+// chatWithCompletions uses traditional Chat Completions API as fallback
+func (p *OpenAIProvider) chatWithCompletions(ctx context.Context, messages []llm.Message, options *llm.ChatOptions) (llm.Response, error) {
 	// Convert messages
 	openAIMessages := make([]openai.ChatCompletionMessageParamUnion, 0, len(messages))
 	for _, msg := range messages {
@@ -68,11 +384,7 @@ func (p *OpenAIProvider) Chat(ctx context.Context, messages []llm.Message, opts 
 	// Prepare params
 	params := openai.ChatCompletionNewParams{
 		Messages: openAIMessages,
-	}
-
-	// Set the model
-	if options.Model != "" {
-		params.Model = options.Model
+		Model:    options.Model,
 	}
 
 	// Set optional parameters
@@ -84,15 +396,32 @@ func (p *OpenAIProvider) Chat(ctx context.Context, messages []llm.Message, opts 
 		params.TopP = openai.Float(float64(options.TopP))
 	}
 
-	if options.MaxTokens > 0 {
+	if options.MaxCompletionTokens > 0 {
+		params.MaxCompletionTokens = openai.Int(int64(options.MaxCompletionTokens))
+	} else if options.MaxTokens > 0 {
 		params.MaxTokens = openai.Int(int64(options.MaxTokens))
 	}
 
-	// Handle stop sequences
+	if options.PresencePenalty != 0 {
+		params.PresencePenalty = openai.Float(float64(options.PresencePenalty))
+	}
+
+	if options.FrequencyPenalty != 0 {
+		params.FrequencyPenalty = openai.Float(float64(options.FrequencyPenalty))
+	}
+
 	if len(options.Stop) > 0 {
 		params.Stop = openai.ChatCompletionNewParamsStopUnion{
 			OfChatCompletionNewsStopArray: options.Stop,
 		}
+	}
+
+	if options.Seed != 0 {
+		params.Seed = openai.Int(options.Seed)
+	}
+
+	if options.User != "" {
+		params.User = openai.String(options.User)
 	}
 
 	// Convert tools
@@ -115,9 +444,6 @@ func (p *OpenAIProvider) Chat(ctx context.Context, messages []llm.Message, opts 
 		params.ResponseFormat = convertToResponseFormatParam(options.ResponseFormat)
 	}
 
-	if options.Seed != 0 {
-		params.Seed = openai.Int(options.Seed)
-	}
 	// Make the API call
 	completion, err := p.client.Chat.Completions.New(ctx, params)
 	if err != nil {
@@ -128,13 +454,20 @@ func (p *OpenAIProvider) Chat(ctx context.Context, messages []llm.Message, opts 
 	return convertFromOpenAIResponse(completion)
 }
 
-// ChatStream implements the LLM interface for streaming responses
+// ChatStream implements streaming for both APIs
 func (p *OpenAIProvider) ChatStream(ctx context.Context, messages []llm.Message, opts ...llm.Option) (llm.Stream, error) {
 	options := defaultChatOptions()
 	for _, opt := range opts {
 		opt(options)
 	}
 
+	// Responses API streaming would go here when SDK supports it
+	// For now, use Chat Completions streaming
+	return p.chatStreamWithCompletions(ctx, messages, options)
+}
+
+// chatStreamWithCompletions uses Chat Completions API for streaming
+func (p *OpenAIProvider) chatStreamWithCompletions(ctx context.Context, messages []llm.Message, options *llm.ChatOptions) (llm.Stream, error) {
 	// Convert messages
 	openAIMessages := make([]openai.ChatCompletionMessageParamUnion, 0, len(messages))
 	for _, msg := range messages {
@@ -145,17 +478,13 @@ func (p *OpenAIProvider) ChatStream(ctx context.Context, messages []llm.Message,
 		openAIMessages = append(openAIMessages, openAIMsg)
 	}
 
-	// Prepare params - note we don't set stream here, the NewStreaming method handles that
+	// Prepare params
 	params := openai.ChatCompletionNewParams{
 		Messages: openAIMessages,
+		Model:    options.Model,
 	}
 
-	// Set the model
-	if options.Model != "" {
-		params.Model = options.Model
-	}
-
-	// Set optional parameters with type conversions
+	// Set optional parameters
 	if options.Temperature != 0 {
 		params.Temperature = openai.Float(float64(options.Temperature))
 	}
@@ -164,11 +493,12 @@ func (p *OpenAIProvider) ChatStream(ctx context.Context, messages []llm.Message,
 		params.TopP = openai.Float(float64(options.TopP))
 	}
 
-	if options.MaxTokens > 0 {
+	if options.MaxCompletionTokens > 0 {
+		params.MaxCompletionTokens = openai.Int(int64(options.MaxCompletionTokens))
+	} else if options.MaxTokens > 0 {
 		params.MaxTokens = openai.Int(int64(options.MaxTokens))
 	}
 
-	// Handle stop sequences
 	if len(options.Stop) > 0 {
 		params.Stop = openai.ChatCompletionNewParamsStopUnion{
 			OfChatCompletionNewsStopArray: options.Stop,
@@ -207,19 +537,21 @@ func (p *OpenAIProvider) ChatStream(ctx context.Context, messages []llm.Message,
 
 // openAIStream adapts the OpenAI streaming response to our Stream interface
 type openAIStream struct {
-	stream      *ssestream.Stream[openai.ChatCompletionChunk]
+	stream interface {
+		Next() bool
+		Current() openai.ChatCompletionChunk
+		Err() error
+	}
 	accumulator openai.ChatCompletionAccumulator
 	lastError   error
 	current     llm.Message
 }
 
 func (s *openAIStream) Next() (llm.Message, error) {
-	// If we already encountered an error, return it
 	if s.lastError != nil {
 		return llm.Message{}, s.lastError
 	}
 
-	// Get the next event
 	if !s.stream.Next() {
 		if err := s.stream.Err(); err != nil {
 			s.lastError = err
@@ -229,7 +561,6 @@ func (s *openAIStream) Next() (llm.Message, error) {
 		return llm.Message{}, io.EOF
 	}
 
-	// Get the current chunk
 	chunk := s.stream.Current()
 	s.accumulator.AddChunk(chunk)
 
@@ -239,22 +570,18 @@ func (s *openAIStream) Next() (llm.Message, error) {
 
 	delta := chunk.Choices[0].Delta
 
-	// Update the current message
 	s.current.Role = llm.RoleAssistant
 	s.current.Content += delta.Content
 
-	// Handle tool calls
 	if len(delta.ToolCalls) > 0 {
 		if s.current.ToolCalls == nil {
 			s.current.ToolCalls = make([]llm.ToolCall, 0)
 		}
 
 		for _, tc := range delta.ToolCalls {
-			// Find or create tool call
 			found := false
 			for i, existingTC := range s.current.ToolCalls {
 				if existingTC.ID == tc.ID {
-					// Update existing tool call
 					s.current.ToolCalls[i].Function.Name += tc.Function.Name
 					s.current.ToolCalls[i].Function.Arguments += tc.Function.Arguments
 					found = true
@@ -263,7 +590,6 @@ func (s *openAIStream) Next() (llm.Message, error) {
 			}
 
 			if !found && tc.ID != "" {
-				// Add new tool call
 				s.current.ToolCalls = append(s.current.ToolCalls, llm.ToolCall{
 					ID:   tc.ID,
 					Type: "function",
@@ -280,11 +606,10 @@ func (s *openAIStream) Next() (llm.Message, error) {
 }
 
 func (s *openAIStream) Close() error {
-	// No explicit close method on the OpenAI stream
 	return nil
 }
 
-// Helper functions to convert between the two libraries
+// Helper functions
 
 func convertToOpenAIMessage(msg llm.Message) (openai.ChatCompletionMessageParamUnion, error) {
 	switch msg.Role {
@@ -318,13 +643,12 @@ func convertToOpenAIMessage(msg llm.Message) (openai.ChatCompletionMessageParamU
 
 		return openai.AssistantMessage(msg.Content), nil
 	case llm.RoleFunction:
-		// Use the tool message approach for function messages
 		return openai.ChatCompletionMessageParamUnion{
 			OfTool: &openai.ChatCompletionToolMessageParam{
 				Content: openai.ChatCompletionToolMessageParamContentUnion{
 					OfString: openai.String(msg.Content),
 				},
-				ToolCallID: msg.Name, // Using name for tool call ID
+				ToolCallID: msg.Name,
 			},
 		}, nil
 	case llm.RoleTool:
@@ -337,10 +661,8 @@ func convertToOpenAIMessage(msg llm.Message) (openai.ChatCompletionMessageParamU
 func convertToOpenAITools(tools []llm.Tool, functions []llm.Function) []openai.ChatCompletionToolParam {
 	result := make([]openai.ChatCompletionToolParam, 0)
 
-	// Convert tools
 	for _, tool := range tools {
 		if tool.Type == "function" {
-			// Create JSON parameters
 			paramsJSON, _ := json.Marshal(tool.Function.Parameters)
 			var parametersMap map[string]any
 			_ = json.Unmarshal(paramsJSON, &parametersMap)
@@ -356,9 +678,7 @@ func convertToOpenAITools(tools []llm.Tool, functions []llm.Function) []openai.C
 		}
 	}
 
-	// Convert legacy functions
 	for _, fn := range functions {
-		// Create JSON parameters
 		paramsJSON, _ := json.Marshal(fn.Parameters)
 		var parametersMap map[string]any
 		_ = json.Unmarshal(paramsJSON, &parametersMap)
@@ -377,7 +697,6 @@ func convertToOpenAITools(tools []llm.Tool, functions []llm.Function) []openai.C
 }
 
 func convertToOpenAIToolChoice(toolChoice any) openai.ChatCompletionToolChoiceOptionUnionParam {
-	// Handle string choices like "auto", "none", or "required"
 	if strChoice, ok := toolChoice.(string); ok {
 		if strChoice == "auto" {
 			return openai.ChatCompletionToolChoiceOptionUnionParam{
@@ -394,7 +713,6 @@ func convertToOpenAIToolChoice(toolChoice any) openai.ChatCompletionToolChoiceOp
 		}
 	}
 
-	// Handle map for specific function choice
 	if mapChoice, ok := toolChoice.(map[string]any); ok {
 		if funcNameMap, ok := mapChoice["function"].(map[string]any); ok {
 			if name, ok := funcNameMap["name"].(string); ok {
@@ -410,7 +728,6 @@ func convertToOpenAIToolChoice(toolChoice any) openai.ChatCompletionToolChoiceOp
 		}
 	}
 
-	// Default to auto
 	return openai.ChatCompletionToolChoiceOptionUnionParam{
 		OfAuto: openai.String("auto"),
 	}
@@ -431,7 +748,6 @@ func convertToResponseFormatParam(format *llm.ResponseFormat) openai.ChatComplet
 	case llm.JSONSchema:
 		schema, ok := format.JSONSchema.(map[string]any)
 		if !ok {
-			// Try to convert to map if it's not already
 			schemaBytes, _ := json.Marshal(format.JSONSchema)
 			var schemaMap map[string]any
 			if err := json.Unmarshal(schemaBytes, &schemaMap); err == nil {
@@ -450,7 +766,6 @@ func convertToResponseFormatParam(format *llm.ResponseFormat) openai.ChatComplet
 			},
 		}
 	default:
-		// Default to text format
 		return openai.ChatCompletionNewParamsResponseFormatUnion{
 			OfText: &shared.ResponseFormatTextParam{},
 		}
@@ -462,16 +777,13 @@ func convertFromOpenAIResponse(completion *openai.ChatCompletion) (llm.Response,
 		return llm.Response{}, errors.New("no choices in response")
 	}
 
-	// Get the first choice
 	choice := completion.Choices[0]
 
-	// Convert the message
 	message := llm.Message{
 		Role:    string(choice.Message.Role),
 		Content: choice.Message.Content,
 	}
 
-	// Handle tool calls
 	if len(choice.Message.ToolCalls) > 0 {
 		toolCalls := make([]llm.ToolCall, 0, len(choice.Message.ToolCalls))
 		for _, tc := range choice.Message.ToolCalls {
@@ -487,7 +799,6 @@ func convertFromOpenAIResponse(completion *openai.ChatCompletion) (llm.Response,
 		message.ToolCalls = toolCalls
 	}
 
-	// Convert usage
 	usage := llm.Usage{
 		PromptTokens:     int(completion.Usage.PromptTokens),
 		CompletionTokens: int(completion.Usage.CompletionTokens),
@@ -506,38 +817,31 @@ func (p *OpenAIProvider) EmbedDocuments(ctx context.Context, documents []string,
 		opt(options)
 	}
 
-	// Prepare parameters
 	params := openai.EmbeddingNewParams{
 		Input: openai.EmbeddingNewParamsInputUnion{
 			OfArrayOfStrings: documents,
 		},
 	}
 
-	// Set the model
 	if options.Model != "" {
 		params.Model = options.Model
 	} else {
-		// Default model
 		params.Model = "text-embedding-3-small"
 	}
 
-	// Set dimensions if specified
 	if options.Dimensions > 0 {
 		params.Dimensions = openai.Int(int64(options.Dimensions))
 	}
 
-	// Set user if specified
 	if options.User != "" {
 		params.User = openai.String(options.User)
 	}
 
-	// Call the OpenAI embedding API
 	resp, err := p.client.Embeddings.New(ctx, params)
 	if err != nil {
 		return nil, err
 	}
 
-	// Convert the response to our embedding type
 	embeddings := make([]embedding.Embedding, len(resp.Data))
 	for i, data := range resp.Data {
 		embeddings[i] = embedding.Embedding{
@@ -552,7 +856,6 @@ func (p *OpenAIProvider) EmbedDocuments(ctx context.Context, documents []string,
 	return embeddings, nil
 }
 
-// EmbedQuery implements the embedding.Embedder interface
 func (p *OpenAIProvider) EmbedQuery(ctx context.Context, text string, opts ...embedding.Option) (embedding.Embedding, error) {
 	embeddings, err := p.EmbedDocuments(ctx, []string{text}, opts...)
 	if err != nil {
@@ -566,7 +869,6 @@ func (p *OpenAIProvider) EmbedQuery(ctx context.Context, text string, opts ...em
 	return embeddings[0], nil
 }
 
-// Helper function to convert []float64 to []float32
 func convertToFloat32Slice(input []float64) []float32 {
 	result := make([]float32, len(input))
 	for i, v := range input {
@@ -581,10 +883,8 @@ func (p *OpenAIProvider) ExtractText(ctx context.Context, imageData []byte, opts
 		opt(options)
 	}
 
-	// Encode image to base64
 	base64Image := base64.StdEncoding.EncodeToString(imageData)
 
-	// Create system message with instructions based on options
 	systemContent := "You are an OCR system that extracts text from images. "
 	if options.Language != "auto" {
 		systemContent += fmt.Sprintf("The text is in %s. ", options.Language)
@@ -593,7 +893,6 @@ func (p *OpenAIProvider) ExtractText(ctx context.Context, imageData []byte, opts
 		systemContent += "Detect and account for text orientation. "
 	}
 
-	// Construct the prompt for the vision model
 	userContent := "Extract the text from this image. "
 
 	switch options.DetailsLevel {
@@ -605,12 +904,10 @@ func (p *OpenAIProvider) ExtractText(ctx context.Context, imageData []byte, opts
 		userContent += "Just provide the extracted text, nothing else."
 	}
 
-	// Create the OpenAI API request parameters
 	openAIMessages := []openai.ChatCompletionMessageParamUnion{
 		openai.SystemMessage(systemContent),
 	}
 
-	// Create content parts for the user message
 	contentParts := []openai.ChatCompletionContentPartUnionParam{
 		{
 			OfText: &openai.ChatCompletionContentPartTextParam{
@@ -623,13 +920,12 @@ func (p *OpenAIProvider) ExtractText(ctx context.Context, imageData []byte, opts
 				Type: constant.ImageURL("image_url"),
 				ImageURL: openai.ChatCompletionContentPartImageImageURLParam{
 					URL:    fmt.Sprintf("data:image/jpeg;base64,%s", base64Image),
-					Detail: "high", // Use high detail for better OCR
+					Detail: "high",
 				},
 			},
 		},
 	}
 
-	// Create the user message with content parts
 	openAIMessages = append(openAIMessages, openai.ChatCompletionMessageParamUnion{
 		OfUser: &openai.ChatCompletionUserMessageParam{
 			Content: openai.ChatCompletionUserMessageParamContentUnion{
@@ -638,30 +934,23 @@ func (p *OpenAIProvider) ExtractText(ctx context.Context, imageData []byte, opts
 		},
 	})
 
-	// Prepare params with the messages
 	params := openai.ChatCompletionNewParams{
 		Messages: openAIMessages,
 	}
 
-	// Set the model
 	modelToUse := options.Model
 	if modelToUse == "" {
 		modelToUse = "gpt-4-vision-preview"
 	}
 	params.Model = modelToUse
-
-	// Set max tokens - vision models often need higher limits
 	params.MaxTokens = openai.Int(1024)
 
-	// Set user if specified
 	if options.User != "" {
 		params.User = openai.String(options.User)
 	}
 
-	// Track time for processing
 	startTime := time.Now()
 
-	// Call the OpenAI API directly
 	completion, err := p.client.Chat.Completions.New(ctx, params)
 	if err != nil {
 		return ocr.Result{}, err
@@ -669,14 +958,12 @@ func (p *OpenAIProvider) ExtractText(ctx context.Context, imageData []byte, opts
 
 	processingTime := int(time.Since(startTime).Milliseconds())
 
-	// Get the response content
 	if len(completion.Choices) == 0 {
 		return ocr.Result{}, errors.New("no response from API")
 	}
 
 	textContent := completion.Choices[0].Message.Content
 
-	// Create the result
 	result := ocr.Result{
 		Text: textContent,
 		Usage: ocr.Usage{
@@ -687,12 +974,9 @@ func (p *OpenAIProvider) ExtractText(ctx context.Context, imageData []byte, opts
 		},
 	}
 
-	// For higher detail levels, attempt to parse structure from the response
 	if options.DetailsLevel != "low" {
-		// Estimate confidence
 		result.Confidence = estimateConfidence(textContent)
 
-		// For high detail, attempt to parse text blocks
 		if options.DetailsLevel == "high" {
 			result.Blocks = parseTextBlocks(textContent)
 		}
@@ -701,14 +985,12 @@ func (p *OpenAIProvider) ExtractText(ctx context.Context, imageData []byte, opts
 	return result, nil
 }
 
-// ExtractTextFromURL implements the ocr.OCRProvider interface
 func (p *OpenAIProvider) ExtractTextFromURL(ctx context.Context, imageURL string, opts ...ocr.Option) (ocr.Result, error) {
 	options := ocr.DefaultOptions()
 	for _, opt := range opts {
 		opt(options)
 	}
 
-	// Create system message with instructions based on options
 	systemContent := "You are an OCR system that extracts text from images. "
 	if options.Language != "auto" {
 		systemContent += fmt.Sprintf("The text is in %s. ", options.Language)
@@ -717,7 +999,6 @@ func (p *OpenAIProvider) ExtractTextFromURL(ctx context.Context, imageURL string
 		systemContent += "Detect and account for text orientation. "
 	}
 
-	// Construct the prompt for the vision model
 	userContent := "Extract the text from this image. "
 
 	switch options.DetailsLevel {
@@ -729,12 +1010,10 @@ func (p *OpenAIProvider) ExtractTextFromURL(ctx context.Context, imageURL string
 		userContent += "Just provide the extracted text, nothing else."
 	}
 
-	// Create the OpenAI API request parameters
 	openAIMessages := []openai.ChatCompletionMessageParamUnion{
 		openai.SystemMessage(systemContent),
 	}
 
-	// Create content parts for the user message
 	contentParts := []openai.ChatCompletionContentPartUnionParam{
 		{
 			OfText: &openai.ChatCompletionContentPartTextParam{
@@ -747,13 +1026,12 @@ func (p *OpenAIProvider) ExtractTextFromURL(ctx context.Context, imageURL string
 				Type: constant.ImageURL("image_url"),
 				ImageURL: openai.ChatCompletionContentPartImageImageURLParam{
 					URL:    imageURL,
-					Detail: "high", // Use high detail for better OCR
+					Detail: "high",
 				},
 			},
 		},
 	}
 
-	// Create the user message with content parts
 	openAIMessages = append(openAIMessages, openai.ChatCompletionMessageParamUnion{
 		OfUser: &openai.ChatCompletionUserMessageParam{
 			Content: openai.ChatCompletionUserMessageParamContentUnion{
@@ -762,30 +1040,23 @@ func (p *OpenAIProvider) ExtractTextFromURL(ctx context.Context, imageURL string
 		},
 	})
 
-	// Prepare params with the messages
 	params := openai.ChatCompletionNewParams{
 		Messages: openAIMessages,
 	}
 
-	// Set the model
 	modelToUse := options.Model
 	if modelToUse == "" {
 		modelToUse = "gpt-4-vision-preview"
 	}
 	params.Model = modelToUse
-
-	// Set max tokens - vision models often need higher limits
 	params.MaxTokens = openai.Int(1024)
 
-	// Set user if specified
 	if options.User != "" {
 		params.User = openai.String(options.User)
 	}
 
-	// Track time for processing
 	startTime := time.Now()
 
-	// Call the OpenAI API directly
 	completion, err := p.client.Chat.Completions.New(ctx, params)
 	if err != nil {
 		return ocr.Result{}, err
@@ -793,14 +1064,12 @@ func (p *OpenAIProvider) ExtractTextFromURL(ctx context.Context, imageURL string
 
 	processingTime := int(time.Since(startTime).Milliseconds())
 
-	// Get the response content
 	if len(completion.Choices) == 0 {
 		return ocr.Result{}, errors.New("no response from API")
 	}
 
 	textContent := completion.Choices[0].Message.Content
 
-	// Create the result
 	result := ocr.Result{
 		Text: textContent,
 		Usage: ocr.Usage{
@@ -811,12 +1080,9 @@ func (p *OpenAIProvider) ExtractTextFromURL(ctx context.Context, imageURL string
 		},
 	}
 
-	// For higher detail levels, attempt to parse structure from the response
 	if options.DetailsLevel != "low" {
-		// Estimate confidence
 		result.Confidence = estimateConfidence(textContent)
 
-		// For high detail, attempt to parse text blocks
 		if options.DetailsLevel == "high" {
 			result.Blocks = parseTextBlocks(textContent)
 		}
@@ -825,12 +1091,7 @@ func (p *OpenAIProvider) ExtractTextFromURL(ctx context.Context, imageURL string
 	return result, nil
 }
 
-// Helper functions for OCR
-
-// Helper function to estimate confidence from text response
 func estimateConfidence(text string) float32 {
-	// This is a simple heuristic - in a real implementation you would
-	// parse the actual confidence values from the structured response
 	if strings.Contains(strings.ToLower(text), "low confidence") {
 		return 0.3
 	} else if strings.Contains(strings.ToLower(text), "medium confidence") {
@@ -838,22 +1099,18 @@ func estimateConfidence(text string) float32 {
 	} else if strings.Contains(strings.ToLower(text), "high confidence") {
 		return 0.9
 	}
-	return 0.7 // Default confidence
+	return 0.7
 }
 
-// Helper function to parse text blocks from response
 func parseTextBlocks(text string) []ocr.TextBlock {
-	// In a real implementation, you would parse the actual blocks
-	// from a structured response. This is just a placeholder.
 	blocks := []ocr.TextBlock{}
 
-	// Simple parsing logic - split by lines and treat each as a block
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
 		if len(line) > 0 {
 			blocks = append(blocks, ocr.TextBlock{
 				Text:       line,
-				Confidence: 0.7, // Default confidence
+				Confidence: 0.7,
 				BoundingBox: ocr.BoundingBox{
 					Y:      float32(i) / float32(len(lines)),
 					X:      0.1,
@@ -868,7 +1125,6 @@ func parseTextBlocks(text string) []ocr.TextBlock {
 }
 
 func (p *OpenAIProvider) Synthesize(ctx context.Context, text string, opts ...speech.SynthesisOption) (speech.Audio, error) {
-	// Apply options
 	options := speech.SynthesisOptions{
 		Model:       string(openai.SpeechModelTTS1),
 		Voice:       "alloy",
@@ -880,7 +1136,6 @@ func (p *OpenAIProvider) Synthesize(ctx context.Context, text string, opts ...sp
 		opt(&options)
 	}
 
-	// Map our format to OpenAI's format
 	responseFormat := openai.AudioSpeechNewParamsResponseFormatMP3
 	switch options.AudioFormat {
 	case speech.AudioFormatMP3:
@@ -893,7 +1148,6 @@ func (p *OpenAIProvider) Synthesize(ctx context.Context, text string, opts ...sp
 		responseFormat = openai.AudioSpeechNewParamsResponseFormatPCM
 	}
 
-	// Map our voice to OpenAI's voice format
 	voice := openai.AudioSpeechNewParamsVoiceAlloy
 	switch strings.ToLower(options.Voice) {
 	case "alloy":
@@ -910,7 +1164,6 @@ func (p *OpenAIProvider) Synthesize(ctx context.Context, text string, opts ...sp
 		voice = openai.AudioSpeechNewParamsVoiceShimmer
 	}
 
-	// Create params with required fields
 	params := openai.AudioSpeechNewParams{
 		Model:          options.Model,
 		Input:          text,
@@ -918,19 +1171,16 @@ func (p *OpenAIProvider) Synthesize(ctx context.Context, text string, opts ...sp
 		ResponseFormat: responseFormat,
 	}
 
-	// Add optional Speed parameter if specified
 	if options.SpeechRate != 1.0 {
 		params.Speed = param.NewOpt(float64(options.SpeechRate))
 	}
 
-	// Make the API call
 	res, err := p.client.Audio.Speech.New(ctx, params)
 	if err != nil {
 		return speech.Audio{}, fmt.Errorf("openai speech synthesis error: %w", err)
 	}
 
-	// Determine sample rate based on the model
-	sampleRate := 24000 // Default for TTS-1
+	sampleRate := 24000
 	if options.SampleRate > 0 {
 		sampleRate = options.SampleRate
 	}
@@ -945,9 +1195,7 @@ func (p *OpenAIProvider) Synthesize(ctx context.Context, text string, opts ...sp
 	}, nil
 }
 
-// Transcribe converts speech audio to text using OpenAI's transcription API
 func (p *OpenAIProvider) Transcribe(ctx context.Context, audio io.Reader, opts ...speech.TranscriptionOption) (speech.Transcript, error) {
-	// Apply options
 	options := speech.TranscriptionOptions{
 		Model:      string(openai.AudioModelWhisper1),
 		Language:   "",
@@ -958,18 +1206,15 @@ func (p *OpenAIProvider) Transcribe(ctx context.Context, audio io.Reader, opts .
 		opt(&options)
 	}
 
-	// Prepare API call parameters with required fields
 	params := openai.AudioTranscriptionNewParams{
 		Model: options.Model,
 		File:  audio,
 	}
 
-	// Add optional Language parameter if specified
 	if options.Language != "" {
 		params.Language = param.NewOpt(options.Language)
 	}
 
-	// Make the API call
 	response, err := p.client.Audio.Transcriptions.New(ctx, params)
 	if err != nil {
 		return speech.Transcript{}, fmt.Errorf("openai transcription error: %w", err)
@@ -981,3 +1226,4 @@ func (p *OpenAIProvider) Transcribe(ctx context.Context, audio io.Reader, opts .
 
 	return result, nil
 }
+

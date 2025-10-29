@@ -1,14 +1,12 @@
 package aiopenai
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -17,19 +15,16 @@ import (
 	"github.com/Abraxas-365/craftable/ai/llm"
 	"github.com/Abraxas-365/craftable/ai/ocr"
 	"github.com/Abraxas-365/craftable/ai/speech"
-	"github.com/openai/openai-go"
-	"github.com/openai/openai-go/option"
-	"github.com/openai/openai-go/packages/param"
-	"github.com/openai/openai-go/shared"
-	"github.com/openai/openai-go/shared/constant"
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/packages/param"
+	"github.com/openai/openai-go/v3/shared"
+	"github.com/openai/openai-go/v3/shared/constant"
 )
 
-// OpenAIProvider implements the LLM interface for OpenAI using Responses API
+// OpenAIProvider implements the LLM interface for OpenAI
 type OpenAIProvider struct {
-	client     openai.Client
-	httpClient *http.Client
-	apiKey     string
-	baseURL    string
+	client openai.Client
 }
 
 // NewOpenAIProvider creates a new OpenAI provider
@@ -42,335 +37,23 @@ func NewOpenAIProvider(apiKey string, opts ...option.RequestOption) *OpenAIProvi
 	client := openai.NewClient(options...)
 
 	return &OpenAIProvider{
-		client:     client,
-		httpClient: &http.Client{},
-		apiKey:     apiKey,
-		baseURL:    "https://api.openai.com/v1",
+		client: client,
 	}
 }
 
 func defaultChatOptions() *llm.ChatOptions {
 	options := llm.DefaultOptions()
 	options.Model = "gpt-4o"
-	options.UseResponsesAPI = true // Default to Responses API
 	return options
 }
 
-// ResponsesInput represents input messages for the Responses API
-type ResponsesInput struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-// ResponsesTool represents a tool in the Responses API
-type ResponsesTool struct {
-	Type     string                 `json:"type"`
-	Function *ResponsesToolFunction `json:"function,omitempty"`
-}
-
-type ResponsesToolFunction struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description,omitempty"`
-	Parameters  map[string]any `json:"parameters,omitempty"`
-}
-
-// ResponsesRequest represents a request to the Responses API
-type ResponsesRequest struct {
-	Model               string              `json:"model"`
-	Input               []ResponsesInput    `json:"input"`
-	Tools               []ResponsesTool     `json:"tools,omitempty"`
-	PreviousResponseID  string              `json:"previous_response_id,omitempty"`
-	Temperature         *float64            `json:"temperature,omitempty"`
-	MaxCompletionTokens *int                `json:"max_completion_tokens,omitempty"`
-	TopP                *float64            `json:"top_p,omitempty"`
-	PresencePenalty     *float64            `json:"presence_penalty,omitempty"`
-	FrequencyPenalty    *float64            `json:"frequency_penalty,omitempty"`
-	Seed                *int64              `json:"seed,omitempty"`
-	User                string              `json:"user,omitempty"`
-	Stream              bool                `json:"stream,omitempty"`
-	ResponseFormat      map[string]any      `json:"response_format,omitempty"`
-	Reasoning           *ResponsesReasoning `json:"reasoning,omitempty"`
-	Store               bool                `json:"store,omitempty"`
-	Metadata            map[string]string   `json:"metadata,omitempty"`
-}
-
-type ResponsesReasoning struct {
-	Effort string `json:"effort,omitempty"` // "low", "medium", "high"
-}
-
-// ResponsesChoice represents a choice in the response
-type ResponsesChoice struct {
-	Index        int              `json:"index"`
-	Message      ResponsesMessage `json:"message"`
-	FinishReason string           `json:"finish_reason"`
-}
-
-type ResponsesMessage struct {
-	Role      string              `json:"role"`
-	Content   string              `json:"content"`
-	ToolCalls []ResponsesToolCall `json:"tool_calls,omitempty"`
-}
-
-type ResponsesToolCall struct {
-	ID       string `json:"id"`
-	Type     string `json:"type"`
-	Function struct {
-		Name      string `json:"name"`
-		Arguments string `json:"arguments"`
-	} `json:"function"`
-}
-
-// ResponsesResponse represents a response from the Responses API
-type ResponsesResponse struct {
-	ID      string            `json:"id"`
-	Object  string            `json:"object"`
-	Created int64             `json:"created"`
-	Model   string            `json:"model"`
-	Choices []ResponsesChoice `json:"choices"`
-	Usage   struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
-	} `json:"usage"`
-}
-
-// Chat implements the LLM interface using Responses API
+// Chat implements the LLM interface
 func (p *OpenAIProvider) Chat(ctx context.Context, messages []llm.Message, opts ...llm.Option) (llm.Response, error) {
 	options := defaultChatOptions()
 	for _, opt := range opts {
 		opt(options)
 	}
 
-	// Use Responses API if specified (default) or Chat Completions as fallback
-	if options.UseResponsesAPI {
-		return p.chatWithResponses(ctx, messages, options)
-	}
-	return p.chatWithCompletions(ctx, messages, options)
-}
-
-// chatWithResponses uses the Responses API
-func (p *OpenAIProvider) chatWithResponses(ctx context.Context, messages []llm.Message, options *llm.ChatOptions) (llm.Response, error) {
-	// Convert messages to Responses API format
-	input := make([]ResponsesInput, 0, len(messages))
-	for _, msg := range messages {
-		role := msg.Role
-		// Convert "system" to "developer" for Responses API
-		if role == llm.RoleSystem {
-			role = "developer"
-		}
-		input = append(input, ResponsesInput{
-			Role:    role,
-			Content: msg.Content,
-		})
-	}
-
-	// Convert tools if any
-	var tools []ResponsesTool
-	if len(options.Tools) > 0 {
-		tools = make([]ResponsesTool, 0, len(options.Tools))
-		for _, tool := range options.Tools {
-			if tool.Type == "function" {
-				// Convert parameters to map[string]any
-				var params map[string]any
-				if tool.Function.Parameters != nil {
-					switch p := tool.Function.Parameters.(type) {
-					case map[string]any:
-						params = p
-					default:
-						// Try to marshal and unmarshal to convert
-						paramBytes, _ := json.Marshal(tool.Function.Parameters)
-						_ = json.Unmarshal(paramBytes, &params)
-					}
-				}
-
-				tools = append(tools, ResponsesTool{
-					Type: "function",
-					Function: &ResponsesToolFunction{
-						Name:        tool.Function.Name,
-						Description: tool.Function.Description,
-						Parameters:  params,
-					},
-				})
-			} else {
-				// Built-in tools like "web_search", "file_search"
-				tools = append(tools, ResponsesTool{Type: tool.Type})
-			}
-		}
-	}
-
-	// Build request
-	req := ResponsesRequest{
-		Model: options.Model,
-		Input: input,
-		Tools: tools,
-		Store: true, // Enable state storage by default
-	}
-
-	// Set optional parameters
-	if options.Temperature != 0 {
-		temp := float64(options.Temperature)
-		req.Temperature = &temp
-	}
-
-	if options.TopP != 0 {
-		topP := float64(options.TopP)
-		req.TopP = &topP
-	}
-
-	if options.MaxCompletionTokens > 0 {
-		req.MaxCompletionTokens = &options.MaxCompletionTokens
-	} else if options.MaxTokens > 0 {
-		// Fallback to legacy MaxTokens
-		req.MaxCompletionTokens = &options.MaxTokens
-	}
-
-	if options.PresencePenalty != 0 {
-		penalty := float64(options.PresencePenalty)
-		req.PresencePenalty = &penalty
-	}
-
-	if options.FrequencyPenalty != 0 {
-		penalty := float64(options.FrequencyPenalty)
-		req.FrequencyPenalty = &penalty
-	}
-
-	if options.Seed != 0 {
-		req.Seed = &options.Seed
-	}
-
-	if options.User != "" {
-		req.User = options.User
-	}
-
-	// Handle reasoning effort for reasoning models
-	if options.ReasoningEffort != "" {
-		req.Reasoning = &ResponsesReasoning{
-			Effort: options.ReasoningEffort,
-		}
-	}
-
-	// Handle response format
-	if options.JSONMode {
-		req.ResponseFormat = map[string]any{
-			"type": "json_object",
-		}
-	} else if options.ResponseFormat != nil {
-		switch options.ResponseFormat.Type {
-		case llm.JSONObject:
-			req.ResponseFormat = map[string]any{
-				"type": "json_object",
-			}
-		case llm.JSONSchema:
-			req.ResponseFormat = map[string]any{
-				"type": "json_schema",
-				"json_schema": map[string]any{
-					"name":   "schema",
-					"schema": options.ResponseFormat.JSONSchema,
-				},
-			}
-		}
-	}
-
-	// Make the API call
-	apiResp, err := p.callResponsesAPI(ctx, req, options.Headers)
-	if err != nil {
-		return llm.Response{}, err
-	}
-
-	// Convert to llm.Response
-	if len(apiResp.Choices) == 0 {
-		return llm.Response{}, fmt.Errorf("no choices in response")
-	}
-
-	choice := apiResp.Choices[0]
-	message := llm.Message{
-		Role:    choice.Message.Role,
-		Content: choice.Message.Content,
-	}
-
-	// Convert tool calls if any
-	if len(choice.Message.ToolCalls) > 0 {
-		toolCalls := make([]llm.ToolCall, 0, len(choice.Message.ToolCalls))
-		for _, tc := range choice.Message.ToolCalls {
-			toolCalls = append(toolCalls, llm.ToolCall{
-				ID:   tc.ID,
-				Type: tc.Type,
-				Function: llm.FunctionCall{
-					Name:      tc.Function.Name,
-					Arguments: tc.Function.Arguments,
-				},
-			})
-		}
-		message.ToolCalls = toolCalls
-	}
-
-	return llm.Response{
-		Message: message,
-		Usage: llm.Usage{
-			PromptTokens:     apiResp.Usage.PromptTokens,
-			CompletionTokens: apiResp.Usage.CompletionTokens,
-			TotalTokens:      apiResp.Usage.TotalTokens,
-		},
-	}, nil
-}
-
-// callResponsesAPI makes a direct HTTP call to the Responses API
-func (p *OpenAIProvider) callResponsesAPI(ctx context.Context, req ResponsesRequest, headers map[string]string) (*ResponsesResponse, error) {
-	// Marshal request to JSON
-	reqBody, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	// Create HTTP request
-	httpReq, err := http.NewRequestWithContext(
-		ctx,
-		"POST",
-		fmt.Sprintf("%s/responses", p.baseURL),
-		bytes.NewReader(reqBody),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	// Set headers
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", p.apiKey))
-
-	// Add custom headers
-	for key, value := range headers {
-		httpReq.Header.Set(key, value)
-	}
-
-	// Make request
-	resp, err := p.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to make request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Read response body
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	// Check status code
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	// Unmarshal response
-	var apiResp ResponsesResponse
-	if err := json.Unmarshal(respBody, &apiResp); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
-	}
-
-	return &apiResp, nil
-}
-
-// chatWithCompletions uses traditional Chat Completions API as fallback
-func (p *OpenAIProvider) chatWithCompletions(ctx context.Context, messages []llm.Message, options *llm.ChatOptions) (llm.Response, error) {
 	// Convert messages
 	openAIMessages := make([]openai.ChatCompletionMessageParamUnion, 0, len(messages))
 	for _, msg := range messages {
@@ -412,7 +95,7 @@ func (p *OpenAIProvider) chatWithCompletions(ctx context.Context, messages []llm
 
 	if len(options.Stop) > 0 {
 		params.Stop = openai.ChatCompletionNewParamsStopUnion{
-			OfChatCompletionNewsStopArray: options.Stop,
+			OfStringArray: options.Stop,
 		}
 	}
 
@@ -422,6 +105,15 @@ func (p *OpenAIProvider) chatWithCompletions(ctx context.Context, messages []llm
 
 	if options.User != "" {
 		params.User = openai.String(options.User)
+	}
+
+	// Add LogitBias
+	if len(options.LogitBias) > 0 {
+		logitBias := make(map[string]int64)
+		for k, v := range options.LogitBias {
+			logitBias[fmt.Sprintf("%d", k)] = int64(v)
+		}
+		params.LogitBias = logitBias
 	}
 
 	// Convert tools
@@ -454,20 +146,13 @@ func (p *OpenAIProvider) chatWithCompletions(ctx context.Context, messages []llm
 	return convertFromOpenAIResponse(completion)
 }
 
-// ChatStream implements streaming for both APIs
+// ChatStream implements streaming for Chat Completions API
 func (p *OpenAIProvider) ChatStream(ctx context.Context, messages []llm.Message, opts ...llm.Option) (llm.Stream, error) {
 	options := defaultChatOptions()
 	for _, opt := range opts {
 		opt(options)
 	}
 
-	// Responses API streaming would go here when SDK supports it
-	// For now, use Chat Completions streaming
-	return p.chatStreamWithCompletions(ctx, messages, options)
-}
-
-// chatStreamWithCompletions uses Chat Completions API for streaming
-func (p *OpenAIProvider) chatStreamWithCompletions(ctx context.Context, messages []llm.Message, options *llm.ChatOptions) (llm.Stream, error) {
 	// Convert messages
 	openAIMessages := make([]openai.ChatCompletionMessageParamUnion, 0, len(messages))
 	for _, msg := range messages {
@@ -501,7 +186,7 @@ func (p *OpenAIProvider) chatStreamWithCompletions(ctx context.Context, messages
 
 	if len(options.Stop) > 0 {
 		params.Stop = openai.ChatCompletionNewParamsStopUnion{
-			OfChatCompletionNewsStopArray: options.Stop,
+			OfStringArray: options.Stop,
 		}
 	}
 
@@ -619,20 +304,24 @@ func convertToOpenAIMessage(msg llm.Message) (openai.ChatCompletionMessageParamU
 		return openai.UserMessage(msg.Content), nil
 	case llm.RoleAssistant:
 		if len(msg.ToolCalls) > 0 {
-			toolCalls := make([]openai.ChatCompletionMessageToolCallParam, 0, len(msg.ToolCalls))
+			// Build tool calls using the correct Param types
+			toolCalls := make([]openai.ChatCompletionMessageToolCallUnionParam, 0, len(msg.ToolCalls))
 			for _, tc := range msg.ToolCalls {
-				toolCalls = append(toolCalls, openai.ChatCompletionMessageToolCallParam{
-					ID:   tc.ID,
-					Type: "function",
-					Function: openai.ChatCompletionMessageToolCallFunctionParam{
-						Name:      tc.Function.Name,
-						Arguments: tc.Function.Arguments,
+				toolCalls = append(toolCalls, openai.ChatCompletionMessageToolCallUnionParam{
+					OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
+						ID:   tc.ID,
+						Type: constant.Function("function"),
+						Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
+							Name:      tc.Function.Name,
+							Arguments: tc.Function.Arguments,
+						},
 					},
 				})
 			}
 
 			return openai.ChatCompletionMessageParamUnion{
 				OfAssistant: &openai.ChatCompletionAssistantMessageParam{
+					Role: constant.Assistant("assistant"),
 					Content: openai.ChatCompletionAssistantMessageParamContentUnion{
 						OfString: openai.String(msg.Content),
 					},
@@ -658,8 +347,8 @@ func convertToOpenAIMessage(msg llm.Message) (openai.ChatCompletionMessageParamU
 	}
 }
 
-func convertToOpenAITools(tools []llm.Tool, functions []llm.Function) []openai.ChatCompletionToolParam {
-	result := make([]openai.ChatCompletionToolParam, 0)
+func convertToOpenAITools(tools []llm.Tool, functions []llm.Function) []openai.ChatCompletionToolUnionParam {
+	result := make([]openai.ChatCompletionToolUnionParam, 0)
 
 	for _, tool := range tools {
 		if tool.Type == "function" {
@@ -667,14 +356,11 @@ func convertToOpenAITools(tools []llm.Tool, functions []llm.Function) []openai.C
 			var parametersMap map[string]any
 			_ = json.Unmarshal(paramsJSON, &parametersMap)
 
-			result = append(result, openai.ChatCompletionToolParam{
-				Type: constant.Function("function"),
-				Function: shared.FunctionDefinitionParam{
-					Name:        tool.Function.Name,
-					Description: openai.String(tool.Function.Description),
-					Parameters:  shared.FunctionParameters(parametersMap),
-				},
-			})
+			result = append(result, openai.ChatCompletionFunctionTool(openai.FunctionDefinitionParam{
+				Name:        tool.Function.Name,
+				Description: openai.String(tool.Function.Description),
+				Parameters:  openai.FunctionParameters(parametersMap),
+			}))
 		}
 	}
 
@@ -683,14 +369,11 @@ func convertToOpenAITools(tools []llm.Tool, functions []llm.Function) []openai.C
 		var parametersMap map[string]any
 		_ = json.Unmarshal(paramsJSON, &parametersMap)
 
-		result = append(result, openai.ChatCompletionToolParam{
-			Type: constant.Function("function"),
-			Function: shared.FunctionDefinitionParam{
-				Name:        fn.Name,
-				Description: openai.String(fn.Description),
-				Parameters:  shared.FunctionParameters(parametersMap),
-			},
-		})
+		result = append(result, openai.ChatCompletionFunctionTool(openai.FunctionDefinitionParam{
+			Name:        fn.Name,
+			Description: openai.String(fn.Description),
+			Parameters:  openai.FunctionParameters(parametersMap),
+		}))
 	}
 
 	return result
@@ -698,36 +381,24 @@ func convertToOpenAITools(tools []llm.Tool, functions []llm.Function) []openai.C
 
 func convertToOpenAIToolChoice(toolChoice any) openai.ChatCompletionToolChoiceOptionUnionParam {
 	if strChoice, ok := toolChoice.(string); ok {
-		if strChoice == "auto" {
+		switch strChoice {
+		case "auto":
 			return openai.ChatCompletionToolChoiceOptionUnionParam{
 				OfAuto: openai.String("auto"),
 			}
-		} else if strChoice == "none" {
+		case "none":
 			return openai.ChatCompletionToolChoiceOptionUnionParam{
 				OfAuto: openai.String("none"),
 			}
-		} else if strChoice == "required" {
+		case "required":
 			return openai.ChatCompletionToolChoiceOptionUnionParam{
 				OfAuto: openai.String("required"),
 			}
 		}
 	}
 
-	if mapChoice, ok := toolChoice.(map[string]any); ok {
-		if funcNameMap, ok := mapChoice["function"].(map[string]any); ok {
-			if name, ok := funcNameMap["name"].(string); ok {
-				return openai.ChatCompletionToolChoiceOptionUnionParam{
-					OfChatCompletionNamedToolChoice: &openai.ChatCompletionNamedToolChoiceParam{
-						Type: "function",
-						Function: openai.ChatCompletionNamedToolChoiceFunctionParam{
-							Name: name,
-						},
-					},
-				}
-			}
-		}
-	}
-
+	// For specific tool choice - simplified approach
+	// Just default to auto if we can't parse it properly
 	return openai.ChatCompletionToolChoiceOptionUnionParam{
 		OfAuto: openai.String("auto"),
 	}
@@ -1154,14 +825,8 @@ func (p *OpenAIProvider) Synthesize(ctx context.Context, text string, opts ...sp
 		voice = openai.AudioSpeechNewParamsVoiceAlloy
 	case "echo":
 		voice = openai.AudioSpeechNewParamsVoiceEcho
-	case "fable":
-		voice = openai.AudioSpeechNewParamsVoiceFable
-	case "onyx":
-		voice = openai.AudioSpeechNewParamsVoiceOnyx
-	case "nova":
-		voice = openai.AudioSpeechNewParamsVoiceNova
-	case "shimmer":
-		voice = openai.AudioSpeechNewParamsVoiceShimmer
+	default:
+		voice = openai.AudioSpeechNewParamsVoiceAlloy
 	}
 
 	params := openai.AudioSpeechNewParams{

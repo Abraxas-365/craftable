@@ -116,6 +116,11 @@ func (p *OpenAIProvider) Chat(ctx context.Context, messages []llm.Message, opts 
 		params.LogitBias = logitBias
 	}
 
+	// Set reasoning effort for reasoning models (o1, o3, etc.)
+	if options.ReasoningEffort != "" {
+		params.ReasoningEffort = convertToOpenAIReasoningEffort(options.ReasoningEffort)
+	}
+
 	// Convert tools
 	if len(options.Tools) > 0 || len(options.Functions) > 0 {
 		tools := convertToOpenAITools(options.Tools, options.Functions)
@@ -188,6 +193,11 @@ func (p *OpenAIProvider) ChatStream(ctx context.Context, messages []llm.Message,
 		params.Stop = openai.ChatCompletionNewParamsStopUnion{
 			OfStringArray: options.Stop,
 		}
+	}
+
+	// Set reasoning effort for reasoning models
+	if options.ReasoningEffort != "" {
+		params.ReasoningEffort = convertToOpenAIReasoningEffort(options.ReasoningEffort)
 	}
 
 	// Convert tools
@@ -401,6 +411,22 @@ func convertToOpenAIToolChoice(toolChoice any) openai.ChatCompletionToolChoiceOp
 	// Just default to auto if we can't parse it properly
 	return openai.ChatCompletionToolChoiceOptionUnionParam{
 		OfAuto: openai.String("auto"),
+	}
+}
+
+func convertToOpenAIReasoningEffort(effort string) shared.ReasoningEffort {
+	switch strings.ToLower(effort) {
+	case "low":
+		return shared.ReasoningEffortLow
+	case "medium":
+		return shared.ReasoningEffortMedium
+	case "high":
+		return shared.ReasoningEffortHigh
+	case "minimal":
+		return shared.ReasoningEffortMinimal
+	default:
+		// Default to medium if unrecognized
+		return shared.ReasoningEffortMedium
 	}
 }
 

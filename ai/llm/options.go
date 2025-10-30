@@ -21,11 +21,8 @@ type ChatOptions struct {
 	JSONMode            bool              // Shorthand for JSON response format
 	Headers             map[string]string // Custom headers to send with the request
 
-	// Reasoning model specific options
 	ReasoningEffort string // Reasoning effort level: "low", "medium", "high"
 
-	// API selection
-	UseResponsesAPI bool // Use Responses API instead of Chat Completions
 }
 
 // Option is a function type to modify ChatOptions
@@ -151,13 +148,6 @@ func WithUser(user string) Option {
 func WithReasoningEffort(effort string) Option {
 	return func(o *ChatOptions) {
 		o.ReasoningEffort = effort
-	}
-}
-
-// WithResponsesAPI enables the Responses API instead of Chat Completions
-func WithResponsesAPI() Option {
-	return func(o *ChatOptions) {
-		o.UseResponsesAPI = true
 	}
 }
 
